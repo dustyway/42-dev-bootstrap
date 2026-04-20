@@ -100,8 +100,11 @@ jobs:
         working-directory: emacs-${{ steps.ver.outputs.version }}
         run: |
           make install DESTDIR="$GITHUB_WORKSPACE/staging"
-          find "$GITHUB_WORKSPACE/staging/opt/emacs/bin" -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
-          find "$GITHUB_WORKSPACE/staging/opt/emacs/libexec" -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+          # Do NOT strip bin/emacs-<VER>: Emacs 30's pdumper looks for a
+          # content-addressed emacs-<sha256>.pdmp file keyed off the binary
+          # fingerprint, so any post-build mutation (including strip) breaks
+          # dump loading and forces a full bootstrap on every startup.
+          # The savings from stripping are marginal vs the pdump/lisp tree.
           # Replace bin/emacs (a symlink to emacs-<VER>) with a relocation
           # wrapper so the tarball can be extracted anywhere, not just at
           # /opt/emacs where --prefix pointed.
