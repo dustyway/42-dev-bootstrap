@@ -1,0 +1,6 @@
+# Global npm packages to keep installed. One package per line.
+# Accepts version specs (e.g. pkg@1.2.3) — trailing @version is stripped
+# when checking existence but used verbatim for install.
+@expo/ngrok
+ngrok
+corepack

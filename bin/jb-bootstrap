@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# jb-bootstrap — idempotent installer/healer for any JetBrains IDE on
+# 42-school clusters. Safe to run every login.
+#
+# Usage:  jb-bootstrap <PRODUCT_CODE>
+# Example (in ~/.bash_profile, install multiple IDEs side-by-side):
+#   jb-bootstrap IIU   # IntelliJ IDEA Ultimate
+#   jb-bootstrap WS    # WebStorm
+#   jb-bootstrap CL    # CLion
+#
+# ─── School storage layout (the reason this script exists) ────────────────────
+# $HOME       : network (iSCSI), 5 GB quota (10 GB if upgraded via intra shop).
+#               Persistent + accessible anywhere. HARD quota — exceeding it
+#               blocks new-file creation and breaks many apps. Keep ~empty.
+# /goinfre    : local disk on the physical machine. Fast, effectively unlimited
+#               size. WIPED when a DIFFERENT user logs in after you (not every
+#               session — your own successive logins keep it). Not accessible
+#               from other machines. ~/.cache is auto-symlinked here on login.
+# /sgoinfre   : NFS, 30 GB quota, accessible from any cluster machine. SLOW
+#               (network) — unsuitable for caches or heavy random I/O. Wipe
+#               rules: (a) any folder >30 GB is wiped Sunday night, warnings
+#               on intra daily at 9:42 + email Fridays; (b) folders untouched
+#               for >6 months are cleared. Path is wildcarded in the docs
+#               (/sgoinfre/goinfre/Perso/*<login>*) so always resolve it via
+#               `ls -d` rather than hardcoding.
+#
+# ─── Placement strategy (per IDE — each gets its own subdir) ──────────────────
+# App binary        → $SGO/jetbrains/<slug>         persistent, survives
+#                                                    session changes + other users.
+# Cached tarball    → $SGO/.cache/jb-<slug>.tar.gz  so a sgoinfre wipe only
+#                                                    costs a ~45 s re-extract.
+# Config + plugins  → $SGO/jetbrains-config/<slug>  small, persists month-to-month.
+# system + logs     → /goinfre/$USER/jetbrains/<slug>/…   indexes rebuilt fast;
+#                                                    NFS stays off the hot path.
+# Launcher          → ~/bin/<slug>                  symlink; ~/bin stays tiny.
+#
+# ─── Budget watch ─────────────────────────────────────────────────────────────
+# Each IDE is ~1.5–3 GB extracted + ~1 GB cached tarball. Three full IDEs plus
+# caches comfortably fits under 30 GB; five or more and you're close to the
+# Sunday-night wipe threshold. Check with `du -sh "$SGO"` periodically.
+#
+# ─── Supported products (code → launcher/slug mapping is in the case below) ──
+# IIU  IntelliJ IDEA Ultimate         IIC  IntelliJ IDEA Community
+# WS   WebStorm                        PS   PhpStorm
+# PCP  PyCharm Professional            PCC  PyCharm Community
+# CL   CLion                           GO   GoLand
+# RM   RubyMine                        RD   Rider
+# DG   DataGrip                        AC   Aqua
+# RR   RustRover
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+[[ $# -ge 1 ]] || { echo "usage: $(basename "$0") <PRODUCT_CODE>[@VERSION] [owner/repo[@tag] ...]" >&2; exit 2; }
+SPEC="$1"; shift
+PLUGINS=("$@")
+
+# Optional @version pin. Unpinned specs ride JetBrains' "latest" redirector,
+# which we'd rather not do reflexively — newer IDE builds can break plugins
+# (e.g., intellij-elixir's EDT threading violation on 2026.1).
+if [[ "$SPEC" == *@* ]]; then
+    CODE="${SPEC%@*}"; VERSION="${SPEC##*@}"
+else
+    CODE="$SPEC"; VERSION=""
+fi
+
+# Map product code → (slug, launcher_name). Slug is what we name files/dirs
+# with; launcher is the script inside <app>/bin/. These are the JetBrains
+# conventions — add new entries here as JetBrains ships new IDEs.
+case "$CODE" in
+    IIU) SLUG="idea-ultimate";  LAUNCHER="idea" ;;
+    IIC) SLUG="idea-community"; LAUNCHER="idea" ;;
+    WS)  SLUG="webstorm";       LAUNCHER="webstorm" ;;
+    PS)  SLUG="phpstorm";       LAUNCHER="phpstorm" ;;
+    PCP) SLUG="pycharm-pro";    LAUNCHER="pycharm" ;;
+    PCC) SLUG="pycharm-ce";     LAUNCHER="pycharm" ;;
+    CL)  SLUG="clion";          LAUNCHER="clion" ;;
+    GO)  SLUG="goland";         LAUNCHER="goland" ;;
+    RM)  SLUG="rubymine";       LAUNCHER="rubymine" ;;
+    RD)  SLUG="rider";          LAUNCHER="rider" ;;
+    DG)  SLUG="datagrip";       LAUNCHER="datagrip" ;;
+    AC)  SLUG="aqua";           LAUNCHER="aqua" ;;
+    RR)  SLUG="rustrover";      LAUNCHER="rustrover" ;;
+    *)   echo "unknown product code: $CODE" >&2; exit 2 ;;
+esac
+
+# Resolve the real sgoinfre path — docs show it with wildcards, so don't hardcode.
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/jetbrains/$SLUG"
+APP_TARBALL="$SGO/.cache/jb-$SLUG.tar.gz"
+APP_CONFIG="$SGO/jetbrains-config/$SLUG"
+GO="/goinfre/$USER/jetbrains/$SLUG"
+
+# 1. Always mkdir the goinfre dirs — they vanish whenever another user logs in
+#    after us. Cheap no-op when they already exist.
+mkdir -p "$GO/system" "$GO/logs" "$APP_CONFIG/config" "$APP_CONFIG/plugins"
+
+# 2. Re-install if: sgoinfre was wiped, this is first run, or the pinned
+#    $VERSION differs from what's on disk. A marker file tracks the currently
+#    installed version (empty = "latest" tracked via redirector); mismatch
+#    triggers a clean reinstall.
+VERSION_MARKER="$APP_HOME/.jb-bootstrap-version"
+installed_version=""
+[[ -f "$VERSION_MARKER" ]] && installed_version=$(cat "$VERSION_MARKER")
+if [[ ! -x "$APP_HOME/bin/$LAUNCHER" || "$installed_version" != "$VERSION" ]]; then
+    if [[ "$installed_version" != "$VERSION" ]]; then
+        echo "[jb-bootstrap:$SLUG] switching version: '$installed_version' -> '${VERSION:-latest}'"
+        rm -f "$APP_TARBALL"
+    fi
+    echo "[jb-bootstrap:$SLUG] installing to $APP_HOME"
+    mkdir -p "$(dirname "$APP_TARBALL")"
+    if [[ ! -s "$APP_TARBALL" ]]; then
+        if [[ -n "$VERSION" ]]; then
+            # Resolve the specific release's linux tarball URL via JetBrains'
+            # data.services API — the /product?version= redirector is unreliable
+            # for point releases.
+            download_url=$(curl -fsSL "https://data.services.jetbrains.com/products/releases?code=${CODE}&type=release" \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); r=next(r for r in d['${CODE}'] if r['version']=='${VERSION}'); print(r['downloads']['linux']['link'])") \
+                || { echo "[jb-bootstrap:$SLUG] could not resolve download URL for ${CODE} ${VERSION}" >&2; exit 1; }
+        else
+            download_url="https://download.jetbrains.com/product?code=${CODE}&latest&distribution=linux"
+        fi
+        echo "[jb-bootstrap:$SLUG] downloading tarball (${VERSION:-latest})"
+        curl -fL --retry 3 -o "$APP_TARBALL" "$download_url"
+    fi
+    # Extract to a .tmp dir then atomic-rename, so an interrupted extract can't
+    # leave a half-installed $APP_HOME that passes the -x check next login.
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    tar -xzf "$APP_TARBALL" -C "$APP_HOME.tmp" --strip-components=1
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+# 3. Rewrite idea.properties every run. Redirects the IDE's four runtime dirs
+#    away from $HOME (which would blow the 5 GB quota once indexes build up).
+#    All JetBrains IDEs read this file from <app>/bin/idea.properties regardless
+#    of product name — it's a legacy name, not IDEA-specific.
+cat > "$APP_HOME/bin/idea.properties" <<EOF
+idea.config.path=$APP_CONFIG/config
+idea.plugins.path=$APP_CONFIG/plugins
+idea.system.path=$GO/system
+idea.log.path=$GO/logs
+EOF
+
+# 4. Symlink launcher into ~/bin under the slug name. Symlink (not copy) so
+#    upgrades propagate automatically; ~/bin stays tiny to respect $HOME quota.
+mkdir -p "$HOME/bin"
+ln -sf "$APP_HOME/bin/$LAUNCHER" "$HOME/bin/$SLUG"
+
+# 5. Install additional plugins from GitHub releases. Each spec is either
+#    "owner/repo" (pulls latest release, including prereleases — the JetBrains
+#    marketplace often lags GitHub by weeks) or "owner/repo@tag" (pins a
+#    specific tag, e.g. to pin past a known-broken newer release).
+#    The tag + extracted dir name are cached in a marker so re-runs are no-ops.
+#    To force a refresh: delete the marker.
+for spec in "${PLUGINS[@]+"${PLUGINS[@]}"}"; do
+    if [[ "$spec" == *@* ]]; then
+        repo="${spec%@*}"; pinned_tag="${spec##*@}"
+        api="https://api.github.com/repos/$repo/releases/tags/$pinned_tag"
+        parse='import json,sys; r=json.load(sys.stdin); z=next(a for a in r["assets"] if a["name"].endswith(".zip")); print(r["tag_name"]); print(z["browser_download_url"])'
+    else
+        repo="$spec"
+        api="https://api.github.com/repos/$repo/releases"
+        parse='import json,sys; r=json.load(sys.stdin)[0]; z=next(a for a in r["assets"] if a["name"].endswith(".zip")); print(r["tag_name"]); print(z["browser_download_url"])'
+    fi
+    marker="$APP_CONFIG/plugins/.jb-bootstrap-${repo//\//_}"
+    meta=$(curl -fsSL "$api" | python3 -c "$parse") \
+        || { echo "[jb-bootstrap:$SLUG] failed to resolve release of $spec" >&2; continue; }
+    tag=$(printf '%s\n' "$meta" | sed -n 1p)
+    url=$(printf '%s\n' "$meta" | sed -n 2p)
+    if [[ -f "$marker" ]] && [[ "$(head -n1 "$marker")" == "$tag" ]]; then
+        continue
+    fi
+    echo "[jb-bootstrap:$SLUG] installing plugin $repo@$tag"
+    if [[ -f "$marker" ]]; then
+        old_dir=$(sed -n 2p "$marker")
+        [[ -n "$old_dir" && -d "$APP_CONFIG/plugins/$old_dir" ]] && rm -rf "$APP_CONFIG/plugins/$old_dir"
+    fi
+    tmp=$(mktemp -d)
+    curl -fsSL --retry 3 -o "$tmp/plugin.zip" "$url"
+    topdir=$(unzip -Z -1 "$tmp/plugin.zip" | head -n1 | cut -d/ -f1)
+    unzip -q -o "$tmp/plugin.zip" -d "$APP_CONFIG/plugins"
+    rm -rf "$tmp"
+    printf '%s\n%s\n' "$tag" "$topdir" > "$marker"
+
+    # Post-install patches: some plugins ship bugs we can locally fix. Keyed
+    # by owner/repo so adding more later is a one-line case entry.
+    case "$repo" in
+        KronicDeth/intellij-elixir)
+            "$HOME/Apps/bin/jb-patch-elixir-debugger" "$APP_CONFIG/plugins/$topdir" || \
+                echo "[jb-bootstrap:$SLUG] warning: elixir debugger patch failed" >&2
+            ;;
+    esac
+done
+
+# 6. Back up / restore IDE settings. $APP_CONFIG is on sgoinfre and can vanish
+#    on Sunday wipes; we mirror a curated whitelist to $HOME/Apps/etc/…
+#    (tiny, persistent) every login. "Did the IDE ever launch here?" is
+#    detected by presence of options/ — JetBrains creates it on first start.
+#       options/ present → back up (captures last session's changes).
+#       options/ absent + backup present → restore (sgoinfre was wiped).
+#       both absent → first run on this login; IDE will create defaults.
+#    Whitelist keeps the backup small and avoids dragging along machine-
+#    specific state (workspace/, log/, jdbc-drivers/, eval/, port, …).
+BACKUP="$HOME/Apps/etc/jetbrains-backup/$SLUG"
+mkdir -p "$BACKUP"
+KEEP=(options keymaps codestyles colors fileTemplates templates tools inspection scratches.xml disabled_plugins.txt)
+if [[ -d "$APP_CONFIG/config/options" ]]; then
+    for item in "${KEEP[@]}"; do
+        src="$APP_CONFIG/config/$item"
+        [[ -e "$src" ]] || continue
+        if [[ -d "$src" ]]; then
+            rsync -a --delete "$src/" "$BACKUP/$item/"
+        else
+            rsync -a "$src" "$BACKUP/$item"
+        fi
+    done
+elif [[ -d "$BACKUP/options" ]]; then
+    echo "[jb-bootstrap:$SLUG] restoring IDE config from $BACKUP"
+    mkdir -p "$APP_CONFIG/config"
+    for item in "${KEEP[@]}"; do
+        [[ -e "$BACKUP/$item" ]] || continue
+        if [[ -d "$BACKUP/$item" ]]; then
+            rsync -a "$BACKUP/$item/" "$APP_CONFIG/config/$item/"
+        else
+            rsync -a "$BACKUP/$item" "$APP_CONFIG/config/$item"
+        fi
+    done
+fi

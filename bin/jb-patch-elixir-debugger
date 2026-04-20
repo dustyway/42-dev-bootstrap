@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# jb-patch-elixir-debugger — idempotently patch intellij-elixir's debugged.ex
+# to put `debugger-*/ebin` on the code path before starting the debug server.
+#
+# Why: Elixir 1.15+ runs `mix` with a reduced code path that omits Erlang's
+# OTP `debugger` app, so the plugin's `:int.interpreted/0` call dies with
+# "module :int is not available". Upstream hasn't fixed this. We fix locally
+# by injecting two lines at the top of IntelliJElixir.Debugged.start/0.
+#
+# Usage: jb-patch-elixir-debugger <plugin-dir>
+#   plugin-dir = <app_config>/plugins/intellij-elixir
+
+set -euo pipefail
+
+PLUGIN_DIR="${1:?usage: $(basename "$0") <plugin-dir>}"
+JAR=$(ls "$PLUGIN_DIR"/lib/intellij-elixir-*.jar 2>/dev/null | head -1)
+[[ -n "$JAR" ]] || { echo "[jb-patch] no intellij-elixir jar in $PLUGIN_DIR" >&2; exit 1; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+cd "$tmp"
+
+unzip -q "$JAR" debugger/lib/intellij_elixir/debugged.ex
+target=debugger/lib/intellij_elixir/debugged.ex
+
+# Idempotent: bail early if already patched.
+if grep -q 'add_patha' "$target"; then
+    exit 0
+fi
+
+python3 - "$target" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+src = p.read_text()
+anchor = "    {:ok, pid} = Supervisor.start_link([IntelliJElixir.Debugger.Server]"
+injection = (
+    '    # jb-patch: Elixir 1.15+ mix runs with a reduced code path that omits\n'
+    '    # debugger-*/ebin, making :int.interpreted/0 fail. Re-add those ebins.\n'
+    '    :code.root_dir()\n'
+    '    |> to_string()\n'
+    '    |> Path.join("lib/debugger-*/ebin")\n'
+    '    |> Path.wildcard()\n'
+    '    |> Enum.each(&:code.add_patha(String.to_charlist(&1)))\n\n'
+)
+if anchor not in src:
+    sys.exit("[jb-patch] anchor line not found — upstream source changed")
+p.write_text(src.replace(anchor, injection + anchor, 1))
+PY
+
+zip -q "$JAR" "$target"
+echo "[jb-patch] patched $(basename "$JAR") (debugger code-path fix)"

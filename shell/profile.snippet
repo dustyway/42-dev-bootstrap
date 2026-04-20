@@ -1,0 +1,9 @@
+# --- 42-jetbrains-bootstrap ------------------------------------------------
+# Paste these lines into ~/.profile (loaded by login shells and GUI apps like
+# the IntelliJ launcher). They set env vars that must be present before any
+# tool spawned from the session can find its mise-managed runtimes.
+
+export PATH="$PATH:$HOME/Apps/bin:$HOME/go/bin"
+export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
+export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+# --- end 42-jetbrains-bootstrap --------------------------------------------

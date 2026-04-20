@@ -1,0 +1,16 @@
+# --- 42-jetbrains-bootstrap ------------------------------------------------
+# Paste these lines into ~/.zshrc (loaded by interactive zsh shells — regular
+# terminals). MISE env vars are duplicated here because ~/.profile isn't
+# sourced by non-login shells.
+
+export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
+export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+eval "$(mise activate zsh)"
+
+# Minimal prompt with git branch (requires zsh's vcs_info). Optional.
+autoload -Uz vcs_info
+precmd() { vcs_info }
+zstyle ':vcs_info:git:*' formats ' %F{magenta}(%b)%f'
+setopt PROMPT_SUBST
+PROMPT='%F{blue}%~%f${vcs_info_msg_0_} %F{green}❯%f '
+# --- end 42-jetbrains-bootstrap --------------------------------------------

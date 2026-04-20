@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# mise-bootstrap — restore mise runtimes + global npm packages after a
+# sgoinfre wipe. Safe to run every login (idempotent: no-op when
+# everything is already in place).
+#
+# Pair with ~/.config/mise/config.toml (tool pins) and
+# ~/Apps/etc/npm-globals.txt (one pkg per line) to describe the full set.
+
+set -euo pipefail
+
+# Pin storage to the school's persistent network share + local disk. Export
+# these here too (not only in ~/.profile) so the script works correctly even
+# if invoked from a shell that didn't source .profile — otherwise mise would
+# fall back to ~/.local/share/mise and blow the $HOME 5 GB quota.
+export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
+export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
+
+# 1. Install any mise-pinned runtime that's missing. `mise install` with no
+#    args reads ~/.config/mise/config.toml and installs what's not there.
+mise install
+
+# 2. Activate mise env so npm/node resolve correctly in the rest of this
+#    script — `mise activate` is shell-hook-based and doesn't work in
+#    non-interactive scripts; `mise env` is the script-safe equivalent.
+eval "$(mise env -s bash)"
+
+GLOBALS="$HOME/Apps/etc/npm-globals.txt"
+[[ -s "$GLOBALS" ]] || exit 0
+
+# 3. Reinstall any global npm packages missing from the current node_modules.
+#    We check existence by directory rather than `npm ls` because the latter
+#    is slow (~2 s cold) — dir-check is instant.
+missing=()
+npm_prefix=$(npm prefix -g)
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    # Strip trailing @version but preserve @scope/ prefix so the dir check
+    # matches what npm actually creates.
+    case "$line" in
+        @*/*@*)  name="${line%@*}" ;;
+        @*/*)    name="$line" ;;
+        *@*)     name="${line%@*}" ;;
+        *)       name="$line" ;;
+    esac
+    [[ -d "$npm_prefix/lib/node_modules/$name" ]] || missing+=("$line")
+done < "$GLOBALS"
+
+if (( ${#missing[@]} > 0 )); then
+    echo "[mise-bootstrap] installing missing npm globals: ${missing[*]}"
+    npm install -g "${missing[@]}"
+fi
