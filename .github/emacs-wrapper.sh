@@ -19,4 +19,17 @@ INFOPATH="$root/share/info${INFOPATH:+:$INFOPATH}"
 # universe — not guaranteed on a no-sudo 42 cluster machine.
 LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export EMACSLOADPATH EMACSDATA EMACSDOC EMACSPATH INFOPATH LD_LIBRARY_PATH
-exec "$root/bin/emacs-$VER" "$@"
+# Locate and pass the pdumper file explicitly. Emacs 30's dump filename is
+# content-addressed (emacs-<sha256>.pdmp, keyed off the binary), and Emacs's
+# auto-discovery uses the baked-in --prefix path (/opt/emacs) which doesn't
+# exist at runtime here — so we glob it ourselves and inject --dump-file.
+# Without this, every startup bootstraps from source (~1s vs ~50ms).
+dmp=
+for f in "$root/libexec/emacs/$VER/$ARCH"/emacs-*.pdmp; do
+  if [ -f "$f" ]; then dmp="$f"; break; fi
+done
+if [ -n "$dmp" ]; then
+  exec "$root/bin/emacs-$VER" --dump-file="$dmp" "$@"
+else
+  exec "$root/bin/emacs-$VER" "$@"
+fi
