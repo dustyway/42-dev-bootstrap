@@ -28,6 +28,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      # Opt into Node 24 for JS actions now — Node 20 is deprecated and will
+      # be forced off starting 2026-06-02. checkout@v4 and
+      # action-gh-release@v2 both support Node 24 already.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
