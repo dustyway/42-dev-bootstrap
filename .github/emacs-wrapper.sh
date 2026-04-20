@@ -15,5 +15,8 @@ EMACSDATA="$root/share/emacs/$VER/etc"
 EMACSDOC="$root/share/emacs/$VER/etc"
 EMACSPATH="$root/libexec/emacs/$VER/$ARCH:$root/libexec"
 INFOPATH="$root/share/info${INFOPATH:+:$INFOPATH}"
-export EMACSLOADPATH EMACSDATA EMACSDOC EMACSPATH INFOPATH
+# Bundle libtree-sitter.so.0 and libgccjit.so.0 because they live in Ubuntu
+# universe — not guaranteed on a no-sudo 42 cluster machine.
+LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export EMACSLOADPATH EMACSDATA EMACSDOC EMACSPATH INFOPATH LD_LIBRARY_PATH
 exec "$root/bin/emacs-$VER" "$@"

@@ -112,6 +112,20 @@ jobs:
           sed -e "s|__EMACS_VERSION__|$v|g" -e "s|__EMACS_ARCH__|$arch|g" \
               "$GITHUB_WORKSPACE/.github/emacs-wrapper.sh" > "$emacs_bin"
           chmod +x "$emacs_bin"
+          # Bundle runtime libs that live in Ubuntu universe (not guaranteed
+          # on a no-sudo 42 cluster). The wrapper adds lib/ to LD_LIBRARY_PATH.
+          libdir="$GITHUB_WORKSPACE/staging/opt/emacs/lib"
+          mkdir -p "$libdir"
+          for soname in libtree-sitter.so.0 libgccjit.so.0; do
+            src=$(ldconfig -p | awk -v s="$soname" '$1 == s { print $NF; exit }')
+            if [[ -n "$src" ]]; then
+              cp -L "$src" "$libdir/$soname"
+              echo "bundled: $soname <- $src"
+            else
+              echo "missing: $soname (not found via ldconfig)" >&2
+              exit 1
+            fi
+          done
 
       - name: Package tarball
         run: |
