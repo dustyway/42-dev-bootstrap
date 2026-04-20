@@ -20,38 +20,47 @@ mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
 #    args reads ~/.config/mise/config.toml and installs what's not there.
 mise install
 
-# 2. Activate mise env so npm/node resolve correctly in the rest of this
+# 2. Activate mise env so npm/node/mix resolve correctly in the rest of this
 #    script — `mise activate` is shell-hook-based and doesn't work in
 #    non-interactive scripts; `mise env` is the script-safe equivalent.
 eval "$(mise env -s bash)"
 
-GLOBALS="$HOME/Apps/etc/npm-globals.txt"
-[[ -s "$GLOBALS" ]] || exit 0
-
-# 3. Reinstall any global npm packages missing from the current node_modules.
-#    We check existence by directory rather than `npm ls` because the latter
-#    is slow (~2 s cold) — dir-check is instant.
-missing=()
-npm_prefix=$(npm prefix -g)
-while IFS= read -r line; do
-    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-    # Strip trailing @version but preserve @scope/ prefix so the dir check
-    # matches what npm actually creates.
-    case "$line" in
-        @*/*@*)  name="${line%@*}" ;;
-        @*/*)    name="$line" ;;
-        *@*)     name="${line%@*}" ;;
-        *)       name="$line" ;;
-    esac
-    [[ -d "$npm_prefix/lib/node_modules/$name" ]] || missing+=("$line")
-done < "$GLOBALS"
-
-if (( ${#missing[@]} > 0 )); then
-    echo "[mise-bootstrap] installing missing npm globals: ${missing[*]}"
-    npm install -g "${missing[@]}"
+# 3. Ensure Hex + rebar are installed for the current Elixir. These are
+#    per-Elixir-version installs, so a version bump (e.g. 1.18 -> 1.19)
+#    otherwise prompts interactively on the next `mix deps.get`.
+#    --if-missing makes this a fast no-op when already present.
+if command -v mix >/dev/null 2>&1; then
+    mix local.hex --if-missing --force >/dev/null 2>&1 || true
+    mix local.rebar --if-missing --force >/dev/null 2>&1 || true
 fi
 
-# 4. Sync IntelliJ SDK homePaths (Elixir/Erlang) with mise's current versions.
+# 4. Reinstall any global npm packages missing from the current node_modules.
+#    We check existence by directory rather than `npm ls` because the latter
+#    is slow (~2 s cold) — dir-check is instant.
+GLOBALS="$HOME/Apps/etc/npm-globals.txt"
+if [[ -s "$GLOBALS" ]]; then
+    missing=()
+    npm_prefix=$(npm prefix -g)
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Strip trailing @version but preserve @scope/ prefix so the dir check
+        # matches what npm actually creates.
+        case "$line" in
+            @*/*@*)  name="${line%@*}" ;;
+            @*/*)    name="$line" ;;
+            *@*)     name="${line%@*}" ;;
+            *)       name="$line" ;;
+        esac
+        [[ -d "$npm_prefix/lib/node_modules/$name" ]] || missing+=("$line")
+    done < "$GLOBALS"
+
+    if (( ${#missing[@]} > 0 )); then
+        echo "[mise-bootstrap] installing missing npm globals: ${missing[*]}"
+        npm install -g "${missing[@]}"
+    fi
+fi
+
+# 5. Sync IntelliJ SDK homePaths (Elixir/Erlang) with mise's current versions.
 #    Safe no-op when the IDE isn't installed yet or the versions already match.
 if [[ -x "$HOME/Apps/bin/jb-sync-elixir-sdk" ]]; then
     "$HOME/Apps/bin/jb-sync-elixir-sdk" || true
