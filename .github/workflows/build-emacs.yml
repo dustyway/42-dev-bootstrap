@@ -102,9 +102,11 @@ jobs:
         run: |
           v="${{ steps.ver.outputs.version }}"
           out="emacs-${v}-linux-x86_64.tar.gz"
-          tar -C staging/opt \
-              --transform "s,^emacs,emacs-${v}," \
-              -czf "$out" emacs
+          # Rename the install dir rather than using `tar --transform`, whose
+          # regex also rewrites symlink targets — e.g. bin/emacs -> emacs-30.2
+          # would become emacs-30.2-30.2 and dangle.
+          mv "staging/opt/emacs" "staging/opt/emacs-${v}"
+          tar -C staging/opt -czf "$out" "emacs-${v}"
           sha256sum "$out" > "${out}.sha256"
           ls -lh "$out" "${out}.sha256"
 
