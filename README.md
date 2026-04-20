@@ -41,6 +41,16 @@ Restores mise-managed runtimes (Node / Go / Elixir / Erlang / …) and global
 npm packages after a `/sgoinfre` wipe. Pulls pins from `~/.config/mise/config.toml`
 and globals from `~/Apps/etc/npm-globals.txt`. Idempotent.
 
+**`emacs-bootstrap`**
+Installs a modern Emacs (tree-sitter + native-comp + pgtk) from a tarball
+built by this repo's own GitHub Actions workflow and published as a Release
+asset. Downloads once, caches the tarball on `/sgoinfre/.cache/`, extracts
+to `/sgoinfre/emacs/<version>/`, symlinks `~/bin/emacs` + `~/bin/emacsclient`.
+No sudo, no system packages — the build toolchain runs on GitHub's Ubuntu
+runner; your cluster machine only downloads and extracts. Rebuild by pushing
+a new `emacs-<VERSION>` tag; `emacs-bootstrap VERSION` picks it up on next
+login.
+
 **`jb-patch-elixir-debugger`**
 Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
 modern Elixir (1.15+) where `mix` runs with a reduced code path that drops
@@ -78,6 +88,7 @@ Finally, add a login-time hook in `~/.zprofile`. Example:
 ```sh
 nohup $HOME/Apps/bin/jb-bootstrap IIU@2025.3.4 KronicDeth/intellij-elixir@v22.0.1 &>/dev/null & disown
 nohup $HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
+nohup $HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
 ```
 
 Backgrounded so they don't block the login.
@@ -119,6 +130,7 @@ bootstrap only reinstalls packages that are actually missing.
 | IDE plugins | ✅ | Re-fetch from GitHub releases via marker files |
 | IDE settings (options/, keymaps/, codestyles/, …) | ✅ | Curated backup/restore via $HOME |
 | mise runtimes | ✅ | `mise install` reads config.toml |
+| Emacs binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Project-specific settings (workspace/, history, recents) | ❌ | Not backed up — rebuild when you reopen the project |

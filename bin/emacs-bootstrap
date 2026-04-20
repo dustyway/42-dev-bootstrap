@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# emacs-bootstrap — install/heal a modern Emacs (tree-sitter + native-comp +
+# pgtk) on 42 cluster machines. Safe to run every login (idempotent).
+#
+# Pulls a tarball built by .github/workflows/build-emacs.yml and published as
+# a GitHub release asset on this repo. The build provenance is auditable via
+# the workflow file; the signing root is your GitHub account + upstream GNU
+# Emacs release signatures.
+#
+# Usage:  emacs-bootstrap [VERSION]
+# Env override:  EMACS_BOOTSTRAP_REPO=owner/repo (defaults to dustyway/42-jetbrains-bootstrap)
+#
+# ─── Placement strategy (same reasoning as jb-bootstrap) ─────────────────────
+# App binary      → $SGO/emacs/<version>/        persistent on sgoinfre
+# Cached tarball  → $SGO/.cache/emacs-<version>… ~45 MB, re-extract on wipe
+# Launcher        → ~/bin/emacs, ~/bin/emacsclient  symlinks, tiny
+# User config     → $HOME/.emacs.d  (not managed here)
+#
+# Native-comp .eln cache defaults to ~/.emacs.d/eln-cache and can grow past
+# the 5 GB $HOME quota on heavy package users. Redirect it in your init:
+#   (when (boundp 'native-comp-eln-load-path)
+#     (startup-redirect-eln-cache "/goinfre/$USER/emacs-eln-cache"))
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-30.2}"
+REPO="${EMACS_BOOTSTRAP_REPO:-dustyway/42-jetbrains-bootstrap}"
+ASSET="emacs-${VERSION}-linux-x86_64.tar.gz"
+URL="https://github.com/${REPO}/releases/download/emacs-${VERSION}/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[emacs-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/emacs/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+SHAFILE="$SGO/.cache/${ASSET}.sha256"
+VERSION_MARKER="$APP_HOME/.emacs-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/emacs"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/emacs" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[emacs-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL" "$SHAFILE"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[emacs-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        # Optional integrity check — non-fatal if sidecar is missing.
+        if curl -fsSL -o "$SHAFILE" "${URL}.sha256" 2>/dev/null; then
+            (cd "$(dirname "$TARBALL")" && sha256sum -c "$(basename "$SHAFILE")") \
+                || { echo "[emacs-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+        fi
+    fi
+    echo "[emacs-bootstrap] installing emacs $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+mkdir -p "$HOME/bin"
+ln -sf "$APP_HOME/bin/emacs"       "$HOME/bin/emacs"
+ln -sf "$APP_HOME/bin/emacsclient" "$HOME/bin/emacsclient"

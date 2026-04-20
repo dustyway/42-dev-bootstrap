@@ -1,0 +1,128 @@
+name: Build Emacs
+
+# Builds a pgtk Emacs with tree-sitter + native-compilation from a signed GNU
+# source tarball and publishes it as a GitHub Release asset. emacs-bootstrap
+# pulls from these releases after an sgoinfre wipe.
+#
+# Trigger by pushing a tag named emacs-<VERSION>, e.g.:
+#   git tag emacs-30.2 && git push origin emacs-30.2
+# Or run manually via the Actions UI (workflow_dispatch).
+#
+# Runner is pinned to ubuntu-22.04 so the glibc floor (2.35) matches the 42
+# cluster baseline; newer Ubuntu hosts are forward-compatible.
+
+on:
+  push:
+    tags:
+      - "emacs-*"
+  workflow_dispatch:
+    inputs:
+      emacs_version:
+        description: "Emacs version to build (e.g. 30.2)"
+        required: true
+        default: "30.2"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            v="${{ inputs.emacs_version }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+            v="${tag#emacs-}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=emacs-$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential texinfo pkg-config \
+            libgtk-3-dev \
+            libgnutls28-dev \
+            libncurses-dev \
+            libtree-sitter-dev \
+            libgccjit-11-dev gcc-11 \
+            libwebp-dev libjpeg-dev libpng-dev libtiff-dev libgif-dev \
+            libxml2-dev libsqlite3-dev \
+            libxpm-dev libacl1-dev \
+            gpg gpgv
+
+      - name: Download and verify Emacs source
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          curl -fsSLO "https://ftpmirror.gnu.org/emacs/emacs-${v}.tar.xz"
+          curl -fsSLO "https://ftpmirror.gnu.org/emacs/emacs-${v}.tar.xz.sig"
+          curl -fsSL "https://ftp.gnu.org/gnu/gnu-keyring.gpg" -o gnu-keyring.gpg
+          gpgv --keyring ./gnu-keyring.gpg "emacs-${v}.tar.xz.sig" "emacs-${v}.tar.xz"
+          tar -xf "emacs-${v}.tar.xz"
+
+      - name: Configure
+        working-directory: emacs-${{ steps.ver.outputs.version }}
+        env:
+          CC: gcc-11
+        run: |
+          ./configure \
+            --prefix=/opt/emacs \
+            --with-native-compilation=aot \
+            --with-tree-sitter \
+            --with-pgtk \
+            --with-modules \
+            --with-xml2 \
+            --with-gnutls \
+            --without-imagemagick \
+            --without-xwidgets \
+            --without-dbus \
+            --without-compress-install \
+            CFLAGS="-O2 -pipe"
+
+      - name: Build
+        working-directory: emacs-${{ steps.ver.outputs.version }}
+        run: make -j"$(nproc)"
+
+      - name: Install to staging
+        working-directory: emacs-${{ steps.ver.outputs.version }}
+        run: |
+          make install DESTDIR="$GITHUB_WORKSPACE/staging"
+          find "$GITHUB_WORKSPACE/staging/opt/emacs/bin" -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+          find "$GITHUB_WORKSPACE/staging/opt/emacs/libexec" -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+
+      - name: Package tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          out="emacs-${v}-linux-x86_64.tar.gz"
+          tar -C staging/opt \
+              --transform "s,^emacs,emacs-${v}," \
+              -czf "$out" emacs
+          sha256sum "$out" > "${out}.sha256"
+          ls -lh "$out" "${out}.sha256"
+
+      - name: Smoke-test the tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          mkdir -p check
+          tar -xzf "emacs-${v}-linux-x86_64.tar.gz" -C check --strip-components=1
+          check/bin/emacs --version
+          check/bin/emacs --batch --eval "(unless (treesit-available-p) (error \"tree-sitter missing\"))"
+          check/bin/emacs --batch --eval "(unless (native-comp-available-p) (error \"native-comp missing\"))"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          files: |
+            emacs-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
+            emacs-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz.sha256
+          generate_release_notes: true
