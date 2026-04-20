@@ -97,6 +97,16 @@ jobs:
           make install DESTDIR="$GITHUB_WORKSPACE/staging"
           find "$GITHUB_WORKSPACE/staging/opt/emacs/bin" -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
           find "$GITHUB_WORKSPACE/staging/opt/emacs/libexec" -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+          # Replace bin/emacs (a symlink to emacs-<VER>) with a relocation
+          # wrapper so the tarball can be extracted anywhere, not just at
+          # /opt/emacs where --prefix pointed.
+          v="${{ steps.ver.outputs.version }}"
+          arch="x86_64-pc-linux-gnu"
+          emacs_bin="$GITHUB_WORKSPACE/staging/opt/emacs/bin/emacs"
+          rm -f "$emacs_bin"
+          sed -e "s|__EMACS_VERSION__|$v|g" -e "s|__EMACS_ARCH__|$arch|g" \
+              "$GITHUB_WORKSPACE/.github/emacs-wrapper.sh" > "$emacs_bin"
+          chmod +x "$emacs_bin"
 
       - name: Package tarball
         run: |
