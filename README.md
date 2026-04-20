@@ -47,6 +47,14 @@ modern Elixir (1.15+) where `mix` runs with a reduced code path that drops
 Erlang's `debugger-*/ebin`. Runs automatically after the Elixir plugin
 installs via `jb-bootstrap`.
 
+**`jb-sync-elixir-sdk`**
+Rewrites every JetBrains product's `jdk.table.xml` so the `Elixir SDK` and
+`Erlang SDK for Elixir SDK` entries point at the current mise-managed
+install paths. Runs at the end of `mise-bootstrap` (catches version bumps)
+and `jb-bootstrap` (catches SDK-containing XML restored from backup).
+Without this, a `mise use --global elixir@…` upgrade leaves the IDE
+pointing at a path that may not exist after a /sgoinfre wipe.
+
 ## Install
 
 ```sh

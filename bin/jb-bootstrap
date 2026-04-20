@@ -230,3 +230,10 @@ elif [[ -d "$BACKUP/options" ]]; then
         fi
     done
 fi
+
+# 7. Sync Elixir/Erlang SDK homePaths in jdk.table.xml with mise's current
+#    versions. Runs after restore so a freshly-restored (possibly stale) XML
+#    gets corrected. No-op when the versions already match.
+if [[ -x "$HOME/Apps/bin/jb-sync-elixir-sdk" ]]; then
+    "$HOME/Apps/bin/jb-sync-elixir-sdk" || true
+fi

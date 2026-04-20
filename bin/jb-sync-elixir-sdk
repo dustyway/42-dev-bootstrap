@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# jb-sync-elixir-sdk — keep every JetBrains product's jdk.table.xml in sync
+# with the mise-pinned Elixir/Erlang versions.
+#
+# Why: when you bump `elixir` or `erlang` via `mise use --global`, the IDE's
+# recorded homePath keeps pointing at the old versioned directory. On a
+# /sgoinfre wipe that path might not exist anymore, and the IDE greets you
+# with a broken SDK. This script rewrites the <homePath> entries for SDKs of
+# type "Elixir SDK" and "Erlang SDK for Elixir SDK" to match mise's current
+# version. Idempotent — no-op when already in sync.
+#
+# Usage: jb-sync-elixir-sdk (no args)
+
+set -euo pipefail
+
+MISE="${MISE_BIN:-$HOME/Apps/bin/mise}"
+MISE_DATA="${MISE_DATA_DIR:-/sgoinfre/goinfre/Perso/${USER}/mise-data}"
+
+# `mise current <tool>` prints "mise WARN …" on stderr and the bare version on
+# stdout. Only the stdout matters; fall back to empty if the tool isn't pinned.
+get_ver() { "$MISE" current "$1" 2>/dev/null | tail -n1; }
+
+elixir_ver=$(get_ver elixir)
+erlang_ver=$(get_ver erlang)
+
+[[ -z "$elixir_ver" && -z "$erlang_ver" ]] && exit 0
+
+# The /sgoinfre path is wildcarded per 42 docs — glob to be safe.
+shopt -s nullglob
+for xml in /sgoinfre/goinfre/Perso/*"${USER}"*/jetbrains-config/*/config/options/jdk.table.xml; do
+    python3 - "$xml" "$MISE_DATA" "${elixir_ver:-}" "${erlang_ver:-}" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+xml_path, mise_data, elixir_ver, erlang_ver = sys.argv[1:5]
+
+targets = {}
+if elixir_ver:
+    targets["Elixir SDK"] = f"{mise_data}/installs/elixir/{elixir_ver}"
+if erlang_ver:
+    targets["Erlang SDK for Elixir SDK"] = f"{mise_data}/installs/erlang/{erlang_ver}"
+
+tree = ET.parse(xml_path)
+changed = False
+for jdk in tree.getroot().findall(".//jdk"):
+    type_el = jdk.find("type")
+    home_el = jdk.find("homePath")
+    if type_el is None or home_el is None:
+        continue
+    target = targets.get(type_el.get("value"))
+    if target and home_el.get("value") != target:
+        print(f"[jb-sync-elixir-sdk] {type_el.get('value')}: "
+              f"{home_el.get('value')} -> {target}")
+        home_el.set("value", target)
+        changed = True
+
+if changed:
+    tree.write(xml_path, xml_declaration=True, encoding="UTF-8")
+PY
+done

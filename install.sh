@@ -12,6 +12,7 @@ mkdir -p "$HOME/Apps/bin" "$HOME/Apps/etc"
 install -m 0755 "$REPO_ROOT/bin/jb-bootstrap"              "$HOME/Apps/bin/jb-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/mise-bootstrap"            "$HOME/Apps/bin/mise-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/jb-patch-elixir-debugger"  "$HOME/Apps/bin/jb-patch-elixir-debugger"
+install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
 
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
     cp "$REPO_ROOT/etc/npm-globals.txt.example" "$HOME/Apps/etc/npm-globals.txt"

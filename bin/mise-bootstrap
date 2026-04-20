@@ -50,3 +50,9 @@ if (( ${#missing[@]} > 0 )); then
     echo "[mise-bootstrap] installing missing npm globals: ${missing[*]}"
     npm install -g "${missing[@]}"
 fi
+
+# 4. Sync IntelliJ SDK homePaths (Elixir/Erlang) with mise's current versions.
+#    Safe no-op when the IDE isn't installed yet or the versions already match.
+if [[ -x "$HOME/Apps/bin/jb-sync-elixir-sdk" ]]; then
+    "$HOME/Apps/bin/jb-sync-elixir-sdk" || true
+fi
