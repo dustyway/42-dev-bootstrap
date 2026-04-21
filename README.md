@@ -1,9 +1,9 @@
-# 42-jetbrains-bootstrap
+# 42-dev-bootstrap
 
-Idempotent scripts to install JetBrains IDEs, language runtimes, and related
-plugins on **42 school cluster machines** — where storage is split across
-three tiers with different persistence, size, and wipe rules. Designed to
-run on every login, do nothing when everything is already in place, and
+Idempotent scripts to install JetBrains IDEs, Emacs, language runtimes, and
+related tooling on **42 school cluster machines** — where storage is split
+across three tiers with different persistence, size, and wipe rules. Designed
+to run on every login, do nothing when everything is already in place, and
 quietly heal the setup when sgoinfre gets wiped.
 
 ## Why
@@ -68,8 +68,8 @@ pointing at a path that may not exist after a /sgoinfre wipe.
 ## Install
 
 ```sh
-git clone https://github.com/<you>/42-jetbrains-bootstrap.git ~/Code/42-jetbrains-bootstrap
-cd ~/Code/42-jetbrains-bootstrap
+git clone https://github.com/<you>/42-dev-bootstrap.git ~/Code/42-dev-bootstrap
+cd ~/Code/42-dev-bootstrap
 ./install.sh
 ```
 

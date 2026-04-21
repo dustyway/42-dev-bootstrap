@@ -8,7 +8,7 @@
 # Emacs release signatures.
 #
 # Usage:  emacs-bootstrap [VERSION]
-# Env override:  EMACS_BOOTSTRAP_REPO=owner/repo (defaults to dustyway/42-jetbrains-bootstrap)
+# Env override:  EMACS_BOOTSTRAP_REPO=owner/repo (defaults to dustyway/42-dev-bootstrap)
 #
 # ─── Placement strategy (same reasoning as jb-bootstrap) ─────────────────────
 # App binary      → $SGO/emacs/<version>/        persistent on sgoinfre
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 VERSION="${1:-30.2}"
-REPO="${EMACS_BOOTSTRAP_REPO:-dustyway/42-jetbrains-bootstrap}"
+REPO="${EMACS_BOOTSTRAP_REPO:-dustyway/42-dev-bootstrap}"
 ASSET="emacs-${VERSION}-linux-x86_64.tar.gz"
 URL="https://github.com/${REPO}/releases/download/emacs-${VERSION}/${ASSET}"
 
