@@ -193,6 +193,11 @@ jobs:
           v="${{ steps.ver.outputs.version }}"
           mkdir -p check
           tar -xzf "emacs-${v}-linux-x86_64.tar.gz" -C check --strip-components=1
+          # Scrub LD_LIBRARY_PATH so the bundle is tested as a 42-cluster user
+          # would see it: only the paths the wrapper sets count. Earlier build
+          # steps set LD_LIBRARY_PATH=/opt/tree-sitter/lib via $GITHUB_ENV, and
+          # that would silently mask a missing SONAME in lib/ otherwise.
+          unset LD_LIBRARY_PATH
           check/bin/emacs --version
           check/bin/emacs --batch --eval "(unless (treesit-available-p) (error \"tree-sitter missing\"))"
           check/bin/emacs --batch --eval "(let ((v (treesit-library-abi-version))) (unless (>= v 15) (error \"tree-sitter ABI %d < 15\" v)))"
