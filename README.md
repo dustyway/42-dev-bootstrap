@@ -42,7 +42,7 @@ npm packages after a `/sgoinfre` wipe. Pulls pins from `~/.config/mise/config.to
 and globals from `~/Apps/etc/npm-globals.txt`. Idempotent.
 
 **`emacs-bootstrap`**
-Installs a modern Emacs (tree-sitter + native-comp + pgtk) from a tarball
+Installs a modern Emacs (tree-sitter + native-comp, GTK3/X11) from a tarball
 built by this repo's own GitHub Actions workflow and published as a Release
 asset. Downloads once, caches the tarball on `/sgoinfre/.cache/`, extracts
 to `/sgoinfre/emacs/<version>/`, symlinks `~/bin/emacs` + `~/bin/emacsclient`.

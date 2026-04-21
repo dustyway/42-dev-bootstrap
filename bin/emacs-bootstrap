@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# emacs-bootstrap — install/heal a modern Emacs (tree-sitter + native-comp +
-# pgtk) on 42 cluster machines. Safe to run every login (idempotent).
+# emacs-bootstrap — install/heal a modern Emacs (tree-sitter + native-comp,
+# GTK3/X11) on 42 cluster machines. Safe to run every login (idempotent).
 #
 # Pulls a tarball built by .github/workflows/build-emacs.yml and published as
 # a GitHub release asset on this repo. The build provenance is auditable via

@@ -1,8 +1,12 @@
 name: Build Emacs
 
-# Builds a pgtk Emacs with tree-sitter + native-compilation from a signed GNU
-# source tarball and publishes it as a GitHub Release asset. emacs-bootstrap
+# Builds a GTK3/X11 Emacs with tree-sitter + native-compilation from a signed
+# GNU source tarball and publishes it as a GitHub Release asset. emacs-bootstrap
 # pulls from these releases after an sgoinfre wipe.
+#
+# X11, not pgtk: 42 cluster sessions run X.Org. Emacs built with --with-pgtk
+# prints a "pure-GTK under X is unsupported" warning and crashes on large
+# clipboard transfers. The default GTK3 toolkit builds against X11 cleanly.
 #
 # Trigger by pushing a tag named emacs-<VERSION>, e.g.:
 #   git tag emacs-30.2 && git push origin emacs-30.2
@@ -82,7 +86,7 @@ jobs:
             --prefix=/opt/emacs \
             --with-native-compilation=aot \
             --with-tree-sitter \
-            --with-pgtk \
+            --with-x-toolkit=gtk3 \
             --with-modules \
             --with-xml2 \
             --with-gnutls \
