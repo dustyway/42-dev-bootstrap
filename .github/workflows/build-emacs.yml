@@ -97,10 +97,25 @@ jobs:
           # ftpmirror.gnu.org load-balances across volunteer mirrors; individual
           # mirrors 502 or stall often enough that zero retries is unsafe. curl's
           # --retry already covers 5xx and connection errors; bump to 5 attempts.
-          dl() { curl -fsSL --retry 5 --retry-delay 10 --retry-max-time 300 "$@"; }
-          dl -O "https://ftpmirror.gnu.org/emacs/emacs-${v}.tar.xz"
-          dl -O "https://ftpmirror.gnu.org/emacs/emacs-${v}.tar.xz.sig"
-          dl -o gnu-keyring.gpg "https://ftp.gnu.org/gnu/gnu-keyring.gpg"
+          # When the whole mirror pool is down (seen 6x 502 in one run), fall
+          # back to ftp.gnu.org — canonical, single-source, slower but reliable.
+          dl_try() {
+            local dest=$1; shift
+            for url in "$@"; do
+              if curl -fsSL --retry 5 --retry-delay 10 --retry-max-time 300 -o "$dest" "$url"; then
+                return 0
+              fi
+              echo "download failed: $url — trying next source" >&2
+            done
+            return 1
+          }
+          dl_try "emacs-${v}.tar.xz" \
+            "https://ftpmirror.gnu.org/emacs/emacs-${v}.tar.xz" \
+            "https://ftp.gnu.org/gnu/emacs/emacs-${v}.tar.xz"
+          dl_try "emacs-${v}.tar.xz.sig" \
+            "https://ftpmirror.gnu.org/emacs/emacs-${v}.tar.xz.sig" \
+            "https://ftp.gnu.org/gnu/emacs/emacs-${v}.tar.xz.sig"
+          dl_try gnu-keyring.gpg "https://ftp.gnu.org/gnu/gnu-keyring.gpg"
           gpgv --keyring ./gnu-keyring.gpg "emacs-${v}.tar.xz.sig" "emacs-${v}.tar.xz"
           tar -xf "emacs-${v}.tar.xz"
 
