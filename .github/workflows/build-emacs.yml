@@ -61,12 +61,30 @@ jobs:
             libgtk-3-dev \
             libgnutls28-dev \
             libncurses-dev \
-            libtree-sitter-dev \
             libgccjit-11-dev gcc-11 \
             libwebp-dev libjpeg-dev libpng-dev libtiff-dev libgif-dev \
             libxml2-dev libsqlite3-dev \
             libxpm-dev libacl1-dev \
             gpg gpgv
+
+      - name: Build libtree-sitter from source
+        # Ubuntu 22.04's libtree-sitter-dev is 0.20.x, which caps Emacs at
+        # language ABI 14. Parsers built with modern tree-sitter CLIs export
+        # ABI 15 and fail to load. Build from a pinned upstream tag and point
+        # both Emacs's configure and the final bundle at this install.
+        env:
+          TS_VERSION: "0.26.8"
+        run: |
+          curl -fsSL --retry 5 --retry-delay 10 --retry-max-time 300 \
+            -o tree-sitter.tar.gz \
+            "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v${TS_VERSION}.tar.gz"
+          tar -xf tree-sitter.tar.gz
+          make -C "tree-sitter-${TS_VERSION}" PREFIX=/opt/tree-sitter -j"$(nproc)"
+          sudo make -C "tree-sitter-${TS_VERSION}" PREFIX=/opt/tree-sitter install
+          # Make the fresh install visible to Emacs's configure (pkg-config
+          # probe) and to the linker at build time.
+          echo "PKG_CONFIG_PATH=/opt/tree-sitter/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/tree-sitter/lib" >> "$GITHUB_ENV"
 
       - name: Download and verify Emacs source
         run: |
@@ -127,7 +145,12 @@ jobs:
           # on a no-sudo 42 cluster). The wrapper adds lib/ to LD_LIBRARY_PATH.
           libdir="$GITHUB_WORKSPACE/staging/opt/emacs/lib"
           mkdir -p "$libdir"
-          for soname in libtree-sitter.so.0 libgccjit.so.0; do
+          # libtree-sitter: bundle the version we just built from source, not
+          # whatever ldconfig points at (the apt package would be 0.20.x and
+          # cap ABI at 14).
+          cp -L /opt/tree-sitter/lib/libtree-sitter.so.0 "$libdir/libtree-sitter.so.0"
+          echo "bundled: libtree-sitter.so.0 <- /opt/tree-sitter/lib"
+          for soname in libgccjit.so.0; do
             src=$(ldconfig -p | awk -v s="$soname" '$1 == s { print $NF; exit }')
             if [[ -n "$src" ]]; then
               cp -L "$src" "$libdir/$soname"
@@ -157,6 +180,7 @@ jobs:
           tar -xzf "emacs-${v}-linux-x86_64.tar.gz" -C check --strip-components=1
           check/bin/emacs --version
           check/bin/emacs --batch --eval "(unless (treesit-available-p) (error \"tree-sitter missing\"))"
+          check/bin/emacs --batch --eval "(let ((v (treesit-library-abi-version))) (unless (>= v 15) (error \"tree-sitter ABI %d < 15\" v)))"
           check/bin/emacs --batch --eval "(unless (native-comp-available-p) (error \"native-comp missing\"))"
 
       - name: Publish release
