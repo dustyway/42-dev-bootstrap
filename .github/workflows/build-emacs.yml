@@ -152,9 +152,19 @@ jobs:
           mkdir -p "$libdir"
           # libtree-sitter: bundle the version we just built from source, not
           # whatever ldconfig points at (the apt package would be 0.20.x and
-          # cap ABI at 14).
-          cp -L /opt/tree-sitter/lib/libtree-sitter.so.0 "$libdir/libtree-sitter.so.0"
-          echo "bundled: libtree-sitter.so.0 <- /opt/tree-sitter/lib"
+          # cap ABI at 14). Query the exact SONAME the emacs binary links
+          # against — tree-sitter 0.25.x uses libtree-sitter.so.0.25 (with
+          # minor version), not the conventional libtree-sitter.so.0, so
+          # hardcoding the filename would ship a useless bundle.
+          v="${{ steps.ver.outputs.version }}"
+          ts_soname=$(objdump -p "$GITHUB_WORKSPACE/staging/opt/emacs/bin/emacs-${v}" \
+            | awk '/NEEDED/ && /libtree-sitter/ { print $2 }')
+          if [[ -z "$ts_soname" ]]; then
+            echo "missing: NEEDED entry for libtree-sitter in emacs-${v}" >&2
+            exit 1
+          fi
+          cp -L "/opt/tree-sitter/lib/$ts_soname" "$libdir/$ts_soname"
+          echo "bundled: $ts_soname <- /opt/tree-sitter/lib"
           for soname in libgccjit.so.0; do
             src=$(ldconfig -p | awk -v s="$soname" '$1 == s { print $NF; exit }')
             if [[ -n "$src" ]]; then
