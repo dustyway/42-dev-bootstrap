@@ -72,8 +72,13 @@ jobs:
         # language ABI 14. Parsers built with modern tree-sitter CLIs export
         # ABI 15 and fail to load. Build from a pinned upstream tag and point
         # both Emacs's configure and the final bundle at this install.
+        #
+        # Pin to the 0.25.x line: ABI 15 landed in 0.25.0, and 0.25.x still
+        # exports the legacy `ts_language_version` symbol Emacs 30.2 calls.
+        # 0.26.0 removed it, so linking Emacs against 0.26.x fails with
+        # "undefined reference to ts_language_version".
         env:
-          TS_VERSION: "0.26.8"
+          TS_VERSION: "0.25.10"
         run: |
           curl -fsSL --retry 5 --retry-delay 10 --retry-max-time 300 \
             -o tree-sitter.tar.gz \
