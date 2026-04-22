@@ -58,7 +58,13 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
+          # The Azure apt mirror GitHub runners default to
+          # (azure.archive.ubuntu.com) periodically goes dark; apt's default
+          # retry schedule then stalls the build for 20+ minutes before
+          # falling back to archive.ubuntu.com. Strip the Azure entry from
+          # the mirror list and cap retries + timeout so apt fails fast.
+          sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 update
           sudo apt-get install -y --no-install-recommends \
             build-essential autoconf automake libtool m4
 
