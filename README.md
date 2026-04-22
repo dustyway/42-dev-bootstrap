@@ -51,6 +51,30 @@ runner; your cluster machine only downloads and extracts. Rebuild by pushing
 a new `emacs-<VERSION>` tag; `emacs-bootstrap VERSION` picks it up on next
 login.
 
+**`postgres-bootstrap`**
+Installs/heals a PostgreSQL server via theseus-rs's prebuilt, sha256-verified
+binaries. Avoids the apt-or-source bind (no sudo available; building from
+source needs bison + flex, which aren't in mise). Extracts to
+`/sgoinfre/postgres/<version>/` and symlinks every pg tool (`psql`, `pg_ctl`,
+`initdb`, …) into `~/bin`. `PGDATA` is per-project and **not** managed here —
+run `initdb -D /sgoinfre/.../<app>-pgdata` inside your app repo.
+
+**`inotify-tools-bootstrap`**
+Installs `inotifywait` / `inotifywatch` — the file watchers Phoenix's
+`file_system` dep uses for dev live-reload. mise has no plugin, apt needs
+root, upstream ships no prebuilt tarball; this repo's
+`build-inotify-tools.yml` GitHub Actions workflow builds a static-linked
+tarball, and the bootstrap downloads + extracts it.
+
+**`clangd-bootstrap`**
+Installs a modern `clangd` (LSP server for C/C++) from the upstream
+`clangd/clangd` prebuilt releases. Shadows Ubuntu's apt clangd-14 via a
+`~/bin/clangd` symlink so Emacs's eglot gets a current binary with
+up-to-date `.clang-format` support (the apt build rejects clang-format 16+
+keys like `InsertNewlineAtEOF`). Ships `clangd` only — no standalone
+`clang-format` CLI, but clangd has libFormat built in, so
+`eglot-format-buffer` / on-type formatting read `~/.clang-format` correctly.
+
 **`jb-patch-elixir-debugger`**
 Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
 modern Elixir (1.15+) where `mix` runs with a reduced code path that drops
@@ -131,6 +155,9 @@ bootstrap only reinstalls packages that are actually missing.
 | IDE settings (options/, keymaps/, codestyles/, …) | ✅ | Curated backup/restore via $HOME |
 | mise runtimes | ✅ | `mise install` reads config.toml |
 | Emacs binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
+| PostgreSQL binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
+| inotify-tools binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
+| clangd binary on /sgoinfre | ✅ | Re-extract from cached zip, else re-download from clangd/clangd Release |
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Project-specific settings (workspace/, history, recents) | ❌ | Not backed up — rebuild when you reopen the project |

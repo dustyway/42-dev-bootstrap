@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# clangd-bootstrap — install/heal a modern clangd on 42 cluster machines via
+# the community clangd/clangd prebuilt releases. Safe to run every login
+# (idempotent).
+#
+# Pulls a prebuilt zip from https://github.com/clangd/clangd/releases and
+# extracts to /sgoinfre so it persists across /goinfre wipes. The clangd
+# binary is symlinked into ~/bin, which Ubuntu's default ~/.profile prepends
+# to PATH — so it shadows the apt /bin/clangd without any shell edits.
+#
+# Why this exists: Ubuntu 22.04 (and even 24.04) apt pins clangd to clang-14,
+# which is too old for recent .clang-format keys (e.g. InsertNewlineAtEOF) and
+# predates several LSP features Emacs's eglot uses. No sudo, no system
+# packages; just download the upstream binary.
+#
+# clang-format not included: the upstream zip ships clangd + bundled
+# resource headers, not a standalone clang-format CLI. Clangd has libFormat
+# compiled in, so Emacs's on-type and on-save formatting (eglot-format-buffer)
+# picks up ~/.clang-format correctly. If you need CLI clang-format, install
+# it separately (pipx install clang-format).
+#
+# Usage:  clangd-bootstrap [VERSION]
+#
+# ─── Placement (same reasoning as emacs-/postgres-bootstrap) ────────────────
+# App binary     → $SGO/clangd/<version>/           persistent on sgoinfre
+# Cached zip     → $SGO/.cache/clangd-linux-<v>…    ~50 MB, re-extract
+# Launcher       → ~/bin/clangd                     symlink, tiny
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-19.1.2}"
+ASSET="clangd-linux-${VERSION}.zip"
+URL="https://github.com/clangd/clangd/releases/download/${VERSION}/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[clangd-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/clangd/${VERSION}"
+ZIPFILE="$SGO/.cache/${ASSET}"
+VERSION_MARKER="$APP_HOME/.clangd-bootstrap-version"
+
+mkdir -p "$(dirname "$ZIPFILE")" "$SGO/clangd"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/clangd" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[clangd-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$ZIPFILE"
+    fi
+    if [[ ! -s "$ZIPFILE" ]]; then
+        echo "[clangd-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$ZIPFILE" "$URL"
+    fi
+    echo "[clangd-bootstrap] installing clangd $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    # The zip contains a single top-level dir "clangd_<VERSION>/" — strip it
+    # so $APP_HOME/bin and $APP_HOME/lib sit at the root (matches the layout
+    # of sibling bootstraps). Clangd uses readlink() to find its resource-dir
+    # relative to the real binary path, so the ~/bin symlink still resolves
+    # the bundled libclang headers correctly.
+    unzip -q "$ZIPFILE" -d "$APP_HOME.tmp"
+    topdir="$APP_HOME.tmp/clangd_${VERSION}"
+    [[ -d "$topdir" ]] || { echo "[clangd-bootstrap] unexpected zip layout: no $topdir" >&2; exit 1; }
+    mv "$topdir"/* "$APP_HOME.tmp/"
+    rmdir "$topdir"
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+mkdir -p "$HOME/bin"
+ln -sf "$APP_HOME/bin/clangd" "$HOME/bin/clangd"
