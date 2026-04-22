@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# postgres-bootstrap — install/heal a PostgreSQL server on 42 cluster machines
+# via theseus-rs's prebuilt binaries. Safe to run every login (idempotent).
+#
+# Pulls a tarball from https://github.com/theseus-rs/postgresql-binaries and
+# extracts to /sgoinfre so it persists across /goinfre wipes. User-facing
+# binaries (psql, pg_ctl, initdb, ...) are symlinked into ~/bin, which is
+# already on PATH via shell/profile.snippet.
+#
+# Usage:  postgres-bootstrap [VERSION]
+#   VERSION accepts upstream 2-part (18.3) or theseus-rs 3-part (18.3.0).
+#
+# Why a third party: Postgres's source tarball from ftp.postgresql.org needs
+# bison + flex to compile, neither of which is installable without root on
+# the 42 cluster; mise's postgres plugins both compile from source. The
+# theseus-rs project publishes sha256-checksummed prebuilt tarballs for
+# multiple architectures — we verify sha256 on every download to close most
+# of the supply-chain gap. For production data this isn't the right trust
+# model; for a local dev DB behind localhost it's fine.
+#
+# ─── Placement (same reasoning as emacs-bootstrap) ───────────────────────────
+# App binary       → $SGO/postgres/<version>/          persistent on sgoinfre
+# Cached tarball   → $SGO/.cache/postgresql-<v>…       ~11 MB, re-extract
+# Launcher         → ~/bin/<pg tool>                   symlinks, tiny
+# Data directory   → NOT managed here. PGDATA is per-project; run
+#                    `initdb -D /sgoinfre/.../<app>-pgdata` in your app repo.
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+raw_version="${1:-18.3}"
+# Normalize to theseus-rs 3-part form. Accept either "18.3" or "18.3.0";
+# Postgres upstream stops at 2 parts, but theseus-rs tags with a trailing .0.
+if [[ "$raw_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    VERSION="${raw_version}.0"
+elif [[ "$raw_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    VERSION="$raw_version"
+else
+    echo "[postgres-bootstrap] invalid version: $raw_version" >&2
+    exit 1
+fi
+
+TRIPLE="x86_64-unknown-linux-gnu"
+ASSET="postgresql-${VERSION}-${TRIPLE}.tar.gz"
+URL="https://github.com/theseus-rs/postgresql-binaries/releases/download/${VERSION}/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[postgres-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/postgres/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+SHAFILE="$SGO/.cache/${ASSET}.sha256"
+VERSION_MARKER="$APP_HOME/.postgres-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/postgres"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/postgres" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[postgres-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL" "$SHAFILE"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[postgres-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        # theseus-rs publishes a sha256sum-format sidecar per asset. Unlike
+        # emacs-bootstrap (where the sidecar is optional), we require it here
+        # because the binary's provenance is third-party.
+        curl -fsSL -o "$SHAFILE" "${URL}.sha256" \
+            || { echo "[postgres-bootstrap] failed to fetch sha256 for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+        (cd "$(dirname "$TARBALL")" && sha256sum -c "$(basename "$SHAFILE")") \
+            || { echo "[postgres-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+    fi
+    echo "[postgres-bootstrap] installing postgres $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+# Symlink every Postgres tool into ~/bin. Postgres binaries are natively
+# relocatable (find_my_exec() computes sharedir/libdir relative to the
+# binary's own location at runtime), so no wrapper script is needed — unlike
+# emacs, where bin/emacs is a sed-rewritten path-relocation wrapper.
+mkdir -p "$HOME/bin"
+for bin in "$APP_HOME"/bin/*; do
+    [[ -x "$bin" && ! -d "$bin" ]] || continue
+    ln -sf "$bin" "$HOME/bin/$(basename "$bin")"
+done

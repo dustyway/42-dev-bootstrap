@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# inotify-tools-bootstrap — install inotifywait/inotifywatch on 42 cluster
+# machines. Used by Phoenix's file_system dep for dev live-reload (saves
+# having to F5 on every code edit). Safe to run every login (idempotent).
+#
+# Pulls a tarball built by .github/workflows/build-inotify-tools.yml and
+# published as a GitHub release asset. Build is static-linked — binaries
+# depend only on glibc, no bundled .so or wrapper script needed.
+#
+# Why not install via mise or apt:
+#   - mise has no inotify-tools plugin (and no libtool plugin, which the
+#     source build needs).
+#   - apt install needs root; 42 cluster users don't have sudo.
+#   - Upstream doesn't publish pre-built dist tarballs.
+#
+# Usage:  inotify-tools-bootstrap [VERSION]
+# Env override:  INOTIFY_TOOLS_BOOTSTRAP_REPO=owner/repo
+#
+# ─── Placement (same reasoning as emacs-/postgres-bootstrap) ────────────────
+# App binaries → $SGO/inotify-tools/<version>/     persistent on sgoinfre
+# Cached tarball → $SGO/.cache/inotify-tools-<v>…  small (<1 MB)
+# Launchers → ~/bin/inotifywait, ~/bin/inotifywatch symlinks, tiny
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-4.25.9.0}"
+REPO="${INOTIFY_TOOLS_BOOTSTRAP_REPO:-dustyway/42-dev-bootstrap}"
+ASSET="inotify-tools-${VERSION}-linux-x86_64.tar.gz"
+URL="https://github.com/${REPO}/releases/download/inotify-tools-${VERSION}/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[inotify-tools-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/inotify-tools/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+SHAFILE="$SGO/.cache/${ASSET}.sha256"
+VERSION_MARKER="$APP_HOME/.inotify-tools-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/inotify-tools"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/inotifywait" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[inotify-tools-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL" "$SHAFILE"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[inotify-tools-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        # Optional integrity check — non-fatal if sidecar is missing, so
+        # older releases without sha256 keep working.
+        if curl -fsSL -o "$SHAFILE" "${URL}.sha256" 2>/dev/null; then
+            (cd "$(dirname "$TARBALL")" && sha256sum -c "$(basename "$SHAFILE")") \
+                || { echo "[inotify-tools-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+        fi
+    fi
+    echo "[inotify-tools-bootstrap] installing inotify-tools $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+# Symlink the CLI tools into ~/bin (already on PATH).
+mkdir -p "$HOME/bin"
+for bin in "$APP_HOME"/bin/*; do
+    [[ -x "$bin" && ! -d "$bin" ]] || continue
+    ln -sf "$bin" "$HOME/bin/$(basename "$bin")"
+done

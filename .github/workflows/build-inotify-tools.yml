@@ -1,0 +1,129 @@
+name: Build inotify-tools
+
+# Builds inotify-tools from upstream git tags and publishes the result as a
+# GitHub Release asset. inotify-tools-bootstrap pulls from these releases.
+#
+# Why this workflow exists: inotify-tools upstream doesn't publish pre-built
+# `dist` tarballs (only raw git snapshots), so local builds need
+# `autoreconf --install` which needs libtool — and libtool isn't available
+# on 42 cluster machines (no root, not in the mise registry). GitHub's
+# ubuntu-22.04 runner has libtool in apt, so we build here and ship the
+# resulting static binaries.
+#
+# Static linking: ./configure --disable-shared --enable-static folds
+# libinotifytools into the CLI binaries, so the tarball doesn't need to
+# bundle a .so or a wrapper script. Binaries depend only on glibc.
+#
+# Runner pinned to ubuntu-22.04 for the glibc 2.35 floor that matches the
+# 42 cluster baseline — same reasoning as build-emacs.yml.
+#
+# Trigger by pushing a tag named inotify-tools-<VERSION>, e.g.:
+#   git tag inotify-tools-4.25.9.0 && git push origin inotify-tools-4.25.9.0
+# Or run manually via the Actions UI (workflow_dispatch).
+
+on:
+  push:
+    tags:
+      - "inotify-tools-*"
+  workflow_dispatch:
+    inputs:
+      inotify_version:
+        description: "inotify-tools version to build (e.g. 4.25.9.0)"
+        required: true
+        default: "4.25.9.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            v="${{ inputs.inotify_version }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+            v="${tag#inotify-tools-}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=inotify-tools-$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential autoconf automake libtool m4
+
+      - name: Fetch source
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-max-time 300 \
+            -o inotify-tools.tar.gz \
+            "https://github.com/inotify-tools/inotify-tools/archive/refs/tags/${v}.tar.gz"
+          tar -xf inotify-tools.tar.gz
+          mv "inotify-tools-${v}" inotify-tools
+
+      - name: Configure + build (static)
+        working-directory: inotify-tools
+        run: |
+          ./autogen.sh
+          # --disable-shared / --enable-static rolls libinotifytools into
+          # the CLI binaries so the shipped tarball has self-contained
+          # executables (no LD_LIBRARY_PATH hacks, no wrapper scripts).
+          ./configure \
+            --prefix=/opt/inotify-tools \
+            --disable-shared \
+            --enable-static \
+            CFLAGS="-O2 -pipe"
+          make -j"$(nproc)"
+          make install DESTDIR="$GITHUB_WORKSPACE/staging"
+
+      - name: Package tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          out="inotify-tools-${v}-linux-x86_64.tar.gz"
+          # Rename the install dir so the tarball's top level is
+          # inotify-tools-<v>/ (consistent with emacs-/postgres-bootstrap).
+          mv "staging/opt/inotify-tools" "staging/opt/inotify-tools-${v}"
+          tar -C staging/opt -czf "$out" "inotify-tools-${v}"
+          sha256sum "$out" > "${out}.sha256"
+          ls -lh "$out" "${out}.sha256"
+
+      - name: Smoke-test the tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          mkdir -p check
+          tar -xzf "inotify-tools-${v}-linux-x86_64.tar.gz" -C check --strip-components=1
+          # Scrub LD_LIBRARY_PATH so we catch any missing dep the target
+          # machine wouldn't have (same reasoning as build-emacs's smoke
+          # test). Static link means nothing should be missing.
+          unset LD_LIBRARY_PATH
+          check/bin/inotifywait --help | head -3
+          check/bin/inotifywatch --help | head -3
+          # Round-trip: start the watcher on a tmp dir, touch a file, assert
+          # the MODIFY event lands within the timeout.
+          watchdir=$(mktemp -d)
+          touch "$watchdir/f"
+          ( sleep 0.5 && echo x > "$watchdir/f" ) &
+          out=$(check/bin/inotifywait -q -e modify --timeout 3 --format '%e' "$watchdir")
+          echo "event: $out"
+          [[ "$out" == *MODIFY* ]] || { echo "no MODIFY event detected" >&2; exit 1; }
+          rm -rf "$watchdir"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          files: |
+            inotify-tools-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
+            inotify-tools-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz.sha256
+          generate_release_notes: true

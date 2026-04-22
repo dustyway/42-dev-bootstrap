@@ -25,13 +25,19 @@ mise install
 #    non-interactive scripts; `mise env` is the script-safe equivalent.
 eval "$(mise env -s bash)"
 
-# 3. Ensure Hex + rebar are installed for the current Elixir. These are
-#    per-Elixir-version installs, so a version bump (e.g. 1.18 -> 1.19)
-#    otherwise prompts interactively on the next `mix deps.get`.
-#    --if-missing makes this a fast no-op when already present.
+# 3. Ensure Hex + rebar + phx_new are installed for the current Elixir.
+#    These are per-Elixir-version installs, so a version bump (e.g. 1.18 ->
+#    1.19) otherwise prompts interactively on the next `mix deps.get` /
+#    `mix phx.new`. --if-missing makes hex/rebar fast no-ops; phx_new has
+#    no such flag, so we grep `mix archive` first to skip the hex fetch
+#    when it's already present.
 if command -v mix >/dev/null 2>&1; then
     mix local.hex --if-missing --force >/dev/null 2>&1 || true
     mix local.rebar --if-missing --force >/dev/null 2>&1 || true
+    if ! mix archive 2>/dev/null | grep -q '^\* phx_new'; then
+        echo "[mise-bootstrap] installing phx_new archive"
+        mix archive.install hex phx_new --force
+    fi
 fi
 
 # 4. Reinstall any global npm packages missing from the current node_modules.
