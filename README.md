@@ -27,6 +27,8 @@ re-bootstrap whatever was lost.
 Installs a JetBrains IDE with caching and self-healing:
 - Binary + cached tarball → `/sgoinfre`, config → `/sgoinfre`, indexes/logs → `/goinfre`
 - `~/bin/<slug>` symlink launcher, under quota
+- `~/.local/share/applications/<slug>.desktop` so the IDE shows up in the
+  GNOME/Unity/KDE launcher with its real icon
 - Optional plugin installs from GitHub releases (marketplace often lags)
 - `<CODE>@VERSION` pins a specific IDE release; `owner/repo@tag` pins a plugin
 - Curated IDE-settings backup to `$HOME/Apps/etc/jetbrains-backup/` on every
@@ -110,7 +112,7 @@ cat shell/zshrc.snippet >> ~/.zshrc
 Finally, add a login-time hook in `~/.zprofile`. Example:
 
 ```sh
-nohup $HOME/Apps/bin/jb-bootstrap IIU@2025.3.4 KronicDeth/intellij-elixir@v22.0.1 &>/dev/null & disown
+nohup $HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & disown
 nohup $HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
 ```
@@ -164,9 +166,6 @@ bootstrap only reinstalls packages that are actually missing.
 
 ## Known issues
 
-- **IntelliJ 2026.1 EDT threading violation** in `intellij-elixir` SDK
-  creation. Workaround: pin IDE to `IIU@2025.3.4` and plugin to
-  `KronicDeth/intellij-elixir@v22.0.1`.
 - **Elixir plugin debugger** `:int.interpreted/0` crash on Elixir 1.15+ —
   auto-patched by `jb-patch-elixir-debugger`. Reapplied each time the plugin
   is (re)installed.

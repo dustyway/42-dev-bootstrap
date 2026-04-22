@@ -33,6 +33,14 @@
 # system + logs     → /goinfre/$USER/jetbrains/<slug>/…   indexes rebuilt fast;
 #                                                    NFS stays off the hot path.
 # Launcher          → ~/bin/<slug>                  symlink; ~/bin stays tiny.
+# Desktop entry     → ~/.local/share/applications/<slug>.desktop
+#                                                    so the IDE shows up in the
+#                                                    GNOME/Unity/KDE launcher.
+#                                                    Name matches what the IDE
+#                                                    itself writes via
+#                                                    "Create Desktop Entry",
+#                                                    so we stay idempotent with
+#                                                    that action.
 #
 # ─── Budget watch ─────────────────────────────────────────────────────────────
 # Each IDE is ~1.5–3 GB extracted + ~1 GB cached tarball. Three full IDEs plus
@@ -68,19 +76,19 @@ fi
 # with; launcher is the script inside <app>/bin/. These are the JetBrains
 # conventions — add new entries here as JetBrains ships new IDEs.
 case "$CODE" in
-    IIU) SLUG="idea-ultimate";  LAUNCHER="idea" ;;
-    IIC) SLUG="idea-community"; LAUNCHER="idea" ;;
-    WS)  SLUG="webstorm";       LAUNCHER="webstorm" ;;
-    PS)  SLUG="phpstorm";       LAUNCHER="phpstorm" ;;
-    PCP) SLUG="pycharm-pro";    LAUNCHER="pycharm" ;;
-    PCC) SLUG="pycharm-ce";     LAUNCHER="pycharm" ;;
-    CL)  SLUG="clion";          LAUNCHER="clion" ;;
-    GO)  SLUG="goland";         LAUNCHER="goland" ;;
-    RM)  SLUG="rubymine";       LAUNCHER="rubymine" ;;
-    RD)  SLUG="rider";          LAUNCHER="rider" ;;
-    DG)  SLUG="datagrip";       LAUNCHER="datagrip" ;;
-    AC)  SLUG="aqua";           LAUNCHER="aqua" ;;
-    RR)  SLUG="rustrover";      LAUNCHER="rustrover" ;;
+    IIU) SLUG="idea-ultimate";  LAUNCHER="idea";      DISPLAY_NAME="IntelliJ IDEA Ultimate" ;;
+    IIC) SLUG="idea-community"; LAUNCHER="idea";      DISPLAY_NAME="IntelliJ IDEA Community" ;;
+    WS)  SLUG="webstorm";       LAUNCHER="webstorm";  DISPLAY_NAME="WebStorm" ;;
+    PS)  SLUG="phpstorm";       LAUNCHER="phpstorm";  DISPLAY_NAME="PhpStorm" ;;
+    PCP) SLUG="pycharm-pro";    LAUNCHER="pycharm";   DISPLAY_NAME="PyCharm Professional" ;;
+    PCC) SLUG="pycharm-ce";     LAUNCHER="pycharm";   DISPLAY_NAME="PyCharm Community" ;;
+    CL)  SLUG="clion";          LAUNCHER="clion";     DISPLAY_NAME="CLion" ;;
+    GO)  SLUG="goland";         LAUNCHER="goland";    DISPLAY_NAME="GoLand" ;;
+    RM)  SLUG="rubymine";       LAUNCHER="rubymine";  DISPLAY_NAME="RubyMine" ;;
+    RD)  SLUG="rider";          LAUNCHER="rider";     DISPLAY_NAME="Rider" ;;
+    DG)  SLUG="datagrip";       LAUNCHER="datagrip";  DISPLAY_NAME="DataGrip" ;;
+    AC)  SLUG="aqua";           LAUNCHER="aqua";      DISPLAY_NAME="Aqua" ;;
+    RR)  SLUG="rustrover";      LAUNCHER="rustrover"; DISPLAY_NAME="RustRover" ;;
     *)   echo "unknown product code: $CODE" >&2; exit 2 ;;
 esac
 
@@ -150,7 +158,30 @@ EOF
 mkdir -p "$HOME/bin"
 ln -sf "$APP_HOME/bin/$LAUNCHER" "$HOME/bin/$SLUG"
 
-# 5. Install additional plugins from GitHub releases. Each spec is either
+# 5. Register a Desktop entry so the IDE appears in GNOME/Unity/KDE launchers.
+#    JetBrains tarballs don't ship a .desktop (the Toolbox app does it for
+#    their supported install path); we generate one with absolute paths so it
+#    works regardless of $PATH, and so sgoinfre-path drift auto-heals on each
+#    run. File is per-slug so multiple IDEs coexist.
+desktop_dir="$HOME/.local/share/applications"
+mkdir -p "$desktop_dir"
+cat > "$desktop_dir/$SLUG.desktop" <<DESK
+[Desktop Entry]
+Name=$DISPLAY_NAME
+GenericName=Integrated Development Environment
+Comment=Develop with pleasure
+Exec=$HOME/bin/$SLUG %f
+Icon=$APP_HOME/bin/$LAUNCHER.svg
+Type=Application
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true
+StartupWMClass=jetbrains-$LAUNCHER
+DESK
+command -v update-desktop-database >/dev/null 2>&1 \
+  && update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
+
+# 6. Install additional plugins from GitHub releases. Each spec is either
 #    "owner/repo" (pulls latest release, including prereleases — the JetBrains
 #    marketplace often lags GitHub by weeks) or "owner/repo@tag" (pins a
 #    specific tag, e.g. to pin past a known-broken newer release).
@@ -196,7 +227,7 @@ for spec in "${PLUGINS[@]+"${PLUGINS[@]}"}"; do
     esac
 done
 
-# 6. Back up / restore IDE settings. $APP_CONFIG is on sgoinfre and can vanish
+# 7. Back up / restore IDE settings. $APP_CONFIG is on sgoinfre and can vanish
 #    on Sunday wipes; we mirror a curated whitelist to $HOME/Apps/etc/…
 #    (tiny, persistent) every login. "Did the IDE ever launch here?" is
 #    detected by presence of options/ — JetBrains creates it on first start.
@@ -231,7 +262,7 @@ elif [[ -d "$BACKUP/options" ]]; then
     done
 fi
 
-# 7. Sync Elixir/Erlang SDK homePaths in jdk.table.xml with mise's current
+# 8. Sync Elixir/Erlang SDK homePaths in jdk.table.xml with mise's current
 #    versions. Runs after restore so a freshly-restored (possibly stale) XML
 #    gets corrected. No-op when the versions already match.
 if [[ -x "$HOME/Apps/bin/jb-sync-elixir-sdk" ]]; then

@@ -33,7 +33,7 @@ Next steps — paste the shell snippets into your rc files:
 
 Then add a login-time hook to ~/.zprofile, e.g.:
 
-  nohup \$HOME/Apps/bin/jb-bootstrap IIU@2025.3.4 KronicDeth/intellij-elixir@v22.0.1 &>/dev/null & disown
+  nohup \$HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & disown
   nohup \$HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/postgres-bootstrap &>/dev/null & disown
