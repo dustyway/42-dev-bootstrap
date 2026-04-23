@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# gh-bootstrap — install/heal the GitHub CLI on 42 cluster machines via the
+# upstream cli/cli prebuilt releases. Safe to run every login (idempotent).
+#
+# Pulls the prebuilt linux_amd64 tarball from
+# https://github.com/cli/cli/releases and extracts to /sgoinfre so it
+# persists across /goinfre wipes. The gh binary is symlinked into ~/bin,
+# which Ubuntu's default ~/.profile prepends to PATH — so it shadows any
+# older apt /usr/bin/gh without shell edits.
+#
+# Why this exists: apt's gh is typically a release or two behind upstream
+# (and apt install needs sudo, which 42 cluster users don't have).
+# Upstream's tarball needs nothing but glibc.
+#
+# Auth survives wipes: `gh auth login` writes ~/.config/gh/, which lives
+# in $HOME (iSCSI, persistent everywhere) — no re-auth after a Sunday
+# /sgoinfre wipe.
+#
+# Usage:  gh-bootstrap [VERSION]
+#
+# ─── Placement (same reasoning as emacs-/postgres-bootstrap) ────────────────
+# App binary     → $SGO/gh/<version>/                       persistent on sgoinfre
+# Cached tarball → $SGO/.cache/gh_<v>_linux_amd64.tar.gz   ~14 MB, re-extract
+# Launcher       → ~/bin/gh                                 symlink, tiny
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-2.91.0}"
+ASSET="gh_${VERSION}_linux_amd64.tar.gz"
+CHECKSUMS="gh_${VERSION}_checksums.txt"
+URL="https://github.com/cli/cli/releases/download/v${VERSION}/${ASSET}"
+CHECKSUMS_URL="https://github.com/cli/cli/releases/download/v${VERSION}/${CHECKSUMS}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[gh-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/gh/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+SHAFILE="$SGO/.cache/${CHECKSUMS}"
+VERSION_MARKER="$APP_HOME/.gh-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/gh"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/gh" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[gh-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL" "$SHAFILE"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[gh-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        # Upstream ships one checksums file covering every asset in the
+        # release; grep out our line and feed it to sha256sum -c. The
+        # trailing-name anchor avoids matching .tar.gz.sig or similar.
+        curl -fsSL -o "$SHAFILE" "$CHECKSUMS_URL"
+        (cd "$(dirname "$TARBALL")" && grep " ${ASSET}\$" "$(basename "$SHAFILE")" | sha256sum -c -) \
+            || { echo "[gh-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+    fi
+    echo "[gh-bootstrap] installing gh $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    # Tarball top-level dir is gh_<v>_linux_amd64/; strip it so $APP_HOME/bin
+    # and $APP_HOME/share sit at the root (matches inotify-tools layout).
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+mkdir -p "$HOME/bin"
+ln -sf "$APP_HOME/bin/gh" "$HOME/bin/gh"

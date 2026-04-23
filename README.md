@@ -77,6 +77,13 @@ keys like `InsertNewlineAtEOF`). Ships `clangd` only — no standalone
 `clang-format` CLI, but clangd has libFormat built in, so
 `eglot-format-buffer` / on-type formatting read `~/.clang-format` correctly.
 
+**`gh-bootstrap`**
+Installs the GitHub CLI (`gh`) from the upstream `cli/cli` prebuilt
+releases. apt's `gh` is usually a release behind and needs sudo anyway;
+upstream ships a glibc-only tarball that drops in cleanly. Auth tokens
+(`gh auth login`) live in `~/.config/gh/` on `$HOME`, so they survive
+`/sgoinfre` wipes — no re-auth on Sunday nights.
+
 **`jb-patch-elixir-debugger`**
 Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
 modern Elixir (1.15+) where `mix` runs with a reduced code path that drops
@@ -119,18 +126,6 @@ nohup $HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
 
 Backgrounded so they don't block the login.
 
-## Pin versions? When and why
-
-- **IDE pin (`@VERSION`)** — use when a plugin you rely on breaks on newer
-  IDE builds (e.g. `intellij-elixir` v22 hits EDT threading violations on
-  IntelliJ 2026.1). Without a pin, `jb-bootstrap` follows JetBrains'
-  "latest" redirector.
-- **Plugin pin (`@tag`)** — use when the latest release is a prerelease with
-  regressions, or when you need a specific version for compatibility.
-
-Example using both:
-`jb-bootstrap IIU@2025.3.4 KronicDeth/intellij-elixir@v22.0.1`
-
 ## mise runtime pinning
 
 Declare runtimes in `~/.config/mise/config.toml` (or via `mise use --global`).
@@ -160,6 +155,8 @@ bootstrap only reinstalls packages that are actually missing.
 | PostgreSQL binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
 | inotify-tools binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
 | clangd binary on /sgoinfre | ✅ | Re-extract from cached zip, else re-download from clangd/clangd Release |
+| gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
+| gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Project-specific settings (workspace/, history, recents) | ❌ | Not backed up — rebuild when you reopen the project |

@@ -63,9 +63,9 @@ set -euo pipefail
 SPEC="$1"; shift
 PLUGINS=("$@")
 
-# Optional @version pin. Unpinned specs ride JetBrains' "latest" redirector,
-# which we'd rather not do reflexively — newer IDE builds can break plugins
-# (e.g., intellij-elixir's EDT threading violation on 2026.1).
+# Optional @version pin. Unpinned specs ride JetBrains' "latest" redirector;
+# pin via CODE@VERSION when a specific build is required for plugin or
+# project compatibility.
 if [[ "$SPEC" == *@* ]]; then
     CODE="${SPEC%@*}"; VERSION="${SPEC##*@}"
 else
