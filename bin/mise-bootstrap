@@ -46,6 +46,32 @@ _wx_lib="/sgoinfre/goinfre/Perso/${USER}/wx/3.2.6/lib"
 unset _wx_lib
 WXPROFILE
         fi
+        # Add a logger filter to ~/.iex.exs that silences the noisy GTK
+        # style-context warnings wx emits on GTK3 — cosmetic mismatch with
+        # wxWidgets 3.2, carries no actionable information.
+        if ! grep -q "# wx-gtk-noise-filter" "$HOME/.iex.exs" 2>/dev/null; then
+            cat >> "$HOME/.iex.exs" <<'WXIEX'
+
+# wx-gtk-noise-filter — added by mise-bootstrap
+:logger.add_primary_filter(:suppress_wx_gtk_noise, {
+  fn event, _ ->
+    try do
+      msg_str =
+        case event[:msg] do
+          {:string, m} when is_binary(m) -> m
+          {:string, m} -> :erlang.iolist_to_binary(m)
+          {fmt, args} when is_list(args) -> :erlang.iolist_to_binary(:io_lib.format(fmt, args))
+          _ -> ""
+        end
+      if String.contains?(msg_str, "GTK:"), do: :stop, else: :ignore
+    rescue
+      _ -> :ignore
+    end
+  end,
+  nil
+})
+WXIEX
+        fi
     else
         echo "[mise-bootstrap] WARNING: wx-bootstrap failed; observer will not work" >&2
         WX_HOME=""
