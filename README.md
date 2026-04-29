@@ -84,6 +84,28 @@ upstream ships a glibc-only tarball that drops in cleanly. Auth tokens
 (`gh auth login`) live in `~/.config/gh/` on `$HOME`, so they survive
 `/sgoinfre` wipes — no re-auth on Sunday nights.
 
+**`graphviz-bootstrap`**
+Installs graphviz (`dot`, `neato`, `fdp`, …) without sudo via
+`apt-get download` + `dpkg-deb -x`, since mise has no plugin and a
+source build pulls in cairo/pango/libpng/freetype. Extracts the jammy
+.debs into `/sgoinfre/graphviz/<version>/`, regenerates `config6` (the
+plugin registry that `dot -c` writes post-install — not shipped in the
+.deb), and drops wrapper scripts into `~/bin` that set
+`LD_LIBRARY_PATH` and `GVBINDIR` to the non-standard prefix. Plugins
+dlopen cairo/pango from the system at runtime, so PNG/SVG/PDF output
+all work.
+
+**`ollama-bootstrap`**
+Installs ollama (single static linux-amd64 tarball from upstream
+`ollama/ollama` releases) into `/sgoinfre/ollama/<version>/` and drops
+a `~/bin/ollama` wrapper that pins `OLLAMA_MODELS=/sgoinfre/ollama/models`
+so models live where they fit. Reads desired models from
+`~/Apps/etc/ollama-models.txt` (default: `qwen2.5-coder:7b` — strongest
+small open coding model that fits sgoinfre with headroom) and re-pulls
+anything missing on next login, so a Sunday-night `/sgoinfre` wipe
+self-heals. Daemon is not auto-started — run `ollama serve` in a
+terminal when you want to use it.
+
 **`jb-patch-elixir-debugger`**
 Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
 modern Elixir (1.15+) where `mix` runs with a reduced code path that drops
@@ -157,9 +179,37 @@ bootstrap only reinstalls packages that are actually missing.
 | clangd binary on /sgoinfre | ✅ | Re-extract from cached zip, else re-download from clangd/clangd Release |
 | gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
 | gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
+| graphviz binaries on /sgoinfre | ✅ | Re-extract from cached .debs, else re-download via `apt-get download` |
+| ollama binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from ollama/ollama Release |
+| ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Project-specific settings (workspace/, history, recents) | ❌ | Not backed up — rebuild when you reopen the project |
+
+## Possible future additions
+
+Same shape as the existing scripts (single-binary tarball, persistent on
+`/sgoinfre`, idempotent re-fetch):
+
+- **`restic` + `rclone`** — encrypted, deduplicated, incremental backup of
+  `$HOME` and curated `/sgoinfre` state to B2/Drive/SFTP. Closes whole-machine
+  loss as a recovery scenario (the matrix above only heals `/sgoinfre` wipes).
+- **`texlive-bootstrap`** — `install-tl` is scriptable, ~6 GB; the canonical
+  "no apt, can't fit in $HOME" candidate.
+- **LSP toolbelt** — `rust-analyzer`, `lua-language-server`, `taplo`, `tinymist`,
+  `pyright`. Each mirrors `clangd-bootstrap` almost verbatim.
+- **CLI toolbelt** — `ripgrep`, `fd`, `bat`, `fzf`, `jq`, `just`, `direnv`,
+  `zoxide`, `delta`. One bundled `qol-bootstrap` for the lot.
+- **`uv-bootstrap`** — Astral's Python toolchain; per-project envs in
+  milliseconds, complements mise.
+
+Won't fit the constraints (don't try):
+
+- Anything needing a 24/7 listener reachable from outside the cluster (gitea,
+  syncthing, jellyfin) — the cluster network and per-login session lifetime
+  kill it.
+- Rootless Podman/Docker — needs `/etc/subuid` + `/etc/subgid` entries, which
+  need root.
 
 ## Known issues
 

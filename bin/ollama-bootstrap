@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# ollama-bootstrap — install ollama + ensure desired models are present.
+#
+# Single static linux-amd64 tarball from the upstream cli/cli-style
+# `ollama/ollama` release. No sudo, no system packages.
+#
+# Models are stored under $SGO/ollama/models/ via OLLAMA_MODELS, so:
+#   - they persist across logins (sgoinfre is shared across machines)
+#   - they get wiped on a Sunday-night > 30 GB sweep
+#   - this script re-pulls any missing model on next login
+#
+# Desired models are listed in ~/Apps/etc/ollama-models.txt (one model
+# spec per line, e.g. `qwen2.5-coder:7b`). Default when missing:
+# qwen2.5-coder:7b — currently the strongest small open coding model
+# that fits sgoinfre with headroom (~4.7 GB Q4_K_M).
+#
+# Daemon is NOT auto-started by this script; run `ollama serve` in a
+# terminal (or nohup it from ~/.zprofile) when you want to use it. The
+# bootstrap only spins up a *temporary* daemon on a non-default port to
+# perform missing-model pulls, then tears it down.
+#
+# ─── Placement (same reasoning as inotify-tools-bootstrap) ──────────────────
+# Binary tree → $SGO/ollama/<version>/   (~150 MB)
+# Models      → $SGO/ollama/models/      (~5–20 GB depending on list)
+# Cached tar  → $SGO/.cache/ollama-<v>.tgz
+# Wrapper     → ~/bin/ollama  (sets OLLAMA_MODELS so bare `ollama` Just Works)
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-0.5.4}"
+REPO="${OLLAMA_BOOTSTRAP_REPO:-ollama/ollama}"
+ASSET="ollama-linux-amd64.tgz"
+URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[ollama-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/ollama/${VERSION}"
+MODELS_DIR="$SGO/ollama/models"
+TARBALL="$SGO/.cache/ollama-${VERSION}.tgz"
+VERSION_MARKER="$APP_HOME/.ollama-bootstrap-version"
+
+MODELS_FILE="$HOME/Apps/etc/ollama-models.txt"
+mkdir -p "$HOME/Apps/etc" "$(dirname "$TARBALL")" "$MODELS_DIR" "$SGO/ollama" "$HOME/bin"
+
+# Seed the desired-models list on first run.
+if [[ ! -e "$MODELS_FILE" ]]; then
+    cat > "$MODELS_FILE" <<'EOF'
+# Desired ollama models, one per line. Lines starting with `#` ignored.
+# `ollama-bootstrap` re-pulls anything missing from $OLLAMA_MODELS.
+qwen2.5-coder:7b
+EOF
+    echo "[ollama-bootstrap] seeded $MODELS_FILE"
+fi
+
+# ── Install / heal the binary ──────────────────────────────────────────────
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/ollama" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[ollama-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[ollama-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+    fi
+    echo "[ollama-bootstrap] installing ollama $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp"
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+# Wrapper at ~/bin/ollama — bakes in OLLAMA_MODELS so the user (and any
+# downstream tool calling `ollama`) doesn't need to remember to export
+# it. Plain script, not a symlink, because we need the env tweak.
+cat > "$HOME/bin/ollama" <<EOF
+#!/usr/bin/env bash
+export OLLAMA_MODELS="\${OLLAMA_MODELS:-$MODELS_DIR}"
+exec "$APP_HOME/bin/ollama" "\$@"
+EOF
+chmod +x "$HOME/bin/ollama"
+
+# ── Ensure desired models are present ──────────────────────────────────────
+mapfile -t WANT < <(grep -vE '^\s*(#|$)' "$MODELS_FILE" || true)
+(( ${#WANT[@]} == 0 )) && exit 0
+
+# Spin up a temporary daemon on a non-default port so we don't fight a
+# long-running session daemon the user might have on :11434.
+export OLLAMA_MODELS="$MODELS_DIR"
+export OLLAMA_HOST="127.0.0.1:11500"
+
+"$APP_HOME/bin/ollama" serve >/dev/null 2>&1 &
+SERVE_PID=$!
+trap 'kill "$SERVE_PID" 2>/dev/null || true' EXIT
+
+# Wait for the API to come up (max ~15 s).
+for _ in $(seq 1 30); do
+    "$APP_HOME/bin/ollama" list >/dev/null 2>&1 && break
+    sleep 0.5
+done
+
+have="$("$APP_HOME/bin/ollama" list 2>/dev/null | tail -n +2 | awk '{print $1}')"
+for m in "${WANT[@]}"; do
+    if grep -Fxq -- "$m" <<< "$have"; then
+        continue
+    fi
+    echo "[ollama-bootstrap] pulling $m (this may take a while)"
+    "$APP_HOME/bin/ollama" pull "$m"
+done
