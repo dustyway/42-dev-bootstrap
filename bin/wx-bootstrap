@@ -51,7 +51,21 @@ if [[ ! -x "$APP_HOME/bin/wx-config" || "$installed" != "$VERSION" ]]; then
     # wx-config and pkg-config .pc files embed the CI build prefix /opt/wx.
     # Patch them to the actual sgoinfre install path so KERL picks up correct
     # include/lib paths when compiling Erlang.
-    sed -i "s|/opt/wx|${APP_HOME}|g" "$APP_HOME/bin/wx-config"
+    #
+    # wx-config is normally in bin/ but may land elsewhere depending on the
+    # build; search the whole tree and ensure bin/wx-config resolves correctly.
+    wx_cfg=$(find "$APP_HOME" -name "wx-config" -not -type d 2>/dev/null | head -1)
+    if [[ -z "$wx_cfg" ]]; then
+        echo "[wx-bootstrap] ERROR: wx-config not found after extraction" >&2
+        echo "[wx-bootstrap] Tree (first 40 entries):" >&2
+        find "$APP_HOME" -maxdepth 4 2>/dev/null | head -40 >&2 || true
+        rm -rf "$APP_HOME"
+        exit 1
+    fi
+    sed -i "s|/opt/wx|${APP_HOME}|g" "$wx_cfg"
+    mkdir -p "$APP_HOME/bin"
+    [[ "$wx_cfg" != "$APP_HOME/bin/wx-config" ]] && \
+        ln -sf "$wx_cfg" "$APP_HOME/bin/wx-config"
     for pc in "$APP_HOME"/lib/pkgconfig/*.pc; do
         [[ -f "$pc" ]] && sed -i "s|/opt/wx|${APP_HOME}|g" "$pc"
     done

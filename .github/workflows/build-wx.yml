@@ -85,17 +85,26 @@ jobs:
           make -j"$(nproc)"
           sudo make install
 
+      - name: Inspect install
+        run: |
+          echo "=== /opt/wx/bin/ ==="
+          ls -la /opt/wx/bin/
+          echo "=== wx-config symlink check ==="
+          find /opt/wx/bin -name "wx-config" -ls
+          find /opt/wx/lib -name "wx-config" -ls 2>/dev/null || true
+
       - name: Stage and package tarball
         run: |
           v="${{ steps.ver.outputs.version }}"
           STAGING="$GITHUB_WORKSPACE/staging/wx-${v}"
           mkdir -p "$STAGING"
 
-          # Headers, wx-config, and shared libs. Skip static .a and libtool .la
-          # files — shared linking is all we need and they bloat the tarball.
-          cp -a /opt/wx/bin "$STAGING/"
-          cp -a /opt/wx/include "$STAGING/"
-          cp -a /opt/wx/lib "$STAGING/"
+          # Use -rL (dereference) so symlinks become real files in the tarball.
+          # cp -a would preserve symlinks, but their targets may not be in the
+          # staging tree, leaving dangling links after extraction on the cluster.
+          cp -rL /opt/wx/bin "$STAGING/"
+          cp -rL /opt/wx/include "$STAGING/"
+          cp -rL /opt/wx/lib "$STAGING/"
           find "$STAGING/lib" \( -name "*.a" -o -name "*.la" \) -delete
 
           # pkgconfig .pc files embed /opt/wx; the bootstrap script patches them
