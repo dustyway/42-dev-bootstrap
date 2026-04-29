@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# aider-bootstrap — install/heal aider (terminal pair-programmer) as a
+# uv tool, with the venv on sgoinfre so it doesn't eat $HOME quota.
+#
+# Why uv tool: aider is a Python CLI with a thick dep tree (litellm,
+# openai, tree-sitter-languages, …). Installing into the system or a
+# pyenv-shimmed Python pollutes those; `uv tool install` puts it in
+# its own isolated venv and drops a shim onto PATH.
+#
+# Storage:
+#   venv tree → $SGO/uv-tools/aider-chat/  (~200–500 MB)
+#   shim     → ~/.local/bin/aider          (on PATH already)
+#
+# UV_TOOL_DIR must be set (profile.snippet does this) — otherwise uv
+# would land the venv in ~/.local/share/uv/tools/, on $HOME's 5 GB
+# quota. We bail rather than silently fill the quota.
+#
+# OLLAMA_API_BASE must also be set in the shell for aider to talk to
+# the user-private ollama daemon (profile.snippet handles this).
+#
+# Usage:  aider-bootstrap [VERSION]
+#   default: install latest if missing, leave existing alone
+#   pinned:  reinstall at the given version (e.g. `aider-bootstrap 0.71.1`)
+
+set -euo pipefail
+
+VERSION="${1:-}"
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "[aider-bootstrap] uv not on PATH — install uv first" >&2
+    exit 1
+fi
+
+if [[ -z "${UV_TOOL_DIR:-}" ]]; then
+    echo "[aider-bootstrap] UV_TOOL_DIR is unset — install would land in \$HOME (5 GB quota)." >&2
+    echo "[aider-bootstrap] Append shell/profile.snippet to ~/.profile and re-source it." >&2
+    exit 1
+fi
+
+mkdir -p "$UV_TOOL_DIR"
+
+# `--with audioop-lts` works around aider's pydub dep importing the
+# stdlib `audioop` module, which was removed in Python 3.13. uv picks
+# 3.13 by default for tool venvs on this box; audioop-lts is the
+# maintained backport. Drop this once aider/pydub stop importing it.
+EXTRA=(--with audioop-lts)
+
+if [[ -n "$VERSION" ]]; then
+    echo "[aider-bootstrap] installing aider-chat==$VERSION"
+    uv tool install --force "${EXTRA[@]}" "aider-chat==$VERSION"
+elif ! uv tool list 2>/dev/null | grep -q '^aider-chat '; then
+    echo "[aider-bootstrap] installing aider-chat (latest)"
+    uv tool install "${EXTRA[@]}" aider-chat
+fi
+
+# Don't auto-upgrade: that hits the network on every login. Run
+# `uv tool upgrade aider-chat` manually when you want a newer version.
+
+if command -v aider >/dev/null 2>&1; then
+    echo "[aider-bootstrap] aider ready: $(command -v aider)"
+else
+    echo "[aider-bootstrap] installed, but ~/.local/bin not on PATH yet — open a new shell." >&2
+fi

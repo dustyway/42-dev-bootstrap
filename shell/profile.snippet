@@ -6,4 +6,14 @@
 export PATH="$PATH:$HOME/Apps/bin:$HOME/go/bin"
 export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+# uv tool venvs (aider, etc.) live on sgoinfre — Python deps are 200+ MB
+# each and would chew through the 5 GB $HOME quota.
+export UV_TOOL_DIR="/sgoinfre/goinfre/Perso/${USER}/uv-tools"
+# Point any ollama client at the user-private daemon (`ollama-serve`) on
+# port 11435. The cluster's apt-installed daemon owns 11434 with a
+# system model store; we run our own on 11435 with $SGO/ollama/models.
+export OLLAMA_HOST=127.0.0.1:11435
+# aider/LiteLLM reads OLLAMA_API_BASE (a different name than ollama
+# itself uses) to route ollama_chat/* model calls.
+export OLLAMA_API_BASE=http://127.0.0.1:11435
 # --- end 42-dev-bootstrap --------------------------------------------

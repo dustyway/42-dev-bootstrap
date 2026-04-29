@@ -96,15 +96,26 @@ dlopen cairo/pango from the system at runtime, so PNG/SVG/PDF output
 all work.
 
 **`ollama-bootstrap`**
-Installs ollama (single static linux-amd64 tarball from upstream
-`ollama/ollama` releases) into `/sgoinfre/ollama/<version>/` and drops
-a `~/bin/ollama` wrapper that pins `OLLAMA_MODELS=/sgoinfre/ollama/models`
-so models live where they fit. Reads desired models from
-`~/Apps/etc/ollama-models.txt` (default: `qwen2.5-coder:7b` — strongest
-small open coding model that fits sgoinfre with headroom) and re-pulls
-anything missing on next login, so a Sunday-night `/sgoinfre` wipe
-self-heals. Daemon is not auto-started — run `ollama serve` in a
-terminal when you want to use it.
+Manages a user-private ollama setup that lives alongside the cluster's
+apt-installed daemon. Doesn't install a binary — uses `/bin/ollama` —
+but runs a *second* daemon under your account on port `11435` (set
+`OLLAMA_HOST=127.0.0.1:11435` per `profile.snippet`), pointed at
+`/sgoinfre/ollama/models` via `OLLAMA_MODELS`. Drops a `~/bin/ollama-serve`
+launcher (idempotent) and re-pulls anything in `~/Apps/etc/ollama-models.txt`
+that's missing on next login, so a Sunday-night `/sgoinfre` wipe
+self-heals. Default model: `qwen2.5-coder:7b` — strongest small open
+coding model that fits sgoinfre with headroom.
+
+**`aider-bootstrap`**
+Installs aider (terminal pair-programmer) as a `uv tool`, with the
+~200–500 MB Python venv on `/sgoinfre/uv-tools/` (via `UV_TOOL_DIR`)
+so it doesn't eat the 5 GB `$HOME` quota — only the `~/.local/bin/aider`
+shim sits in `$HOME`. Self-healing across `/sgoinfre` wipes: re-runs
+`uv tool install` when the venv is gone. Pair with `ollama-bootstrap`
+for a fully-local coding loop:
+`aider --model ollama_chat/qwen2.5-coder:7b --edit-format whole`.
+`OLLAMA_API_BASE` is exported in `profile.snippet` so aider's LiteLLM
+backend routes to your daemon automatically.
 
 **`jb-patch-elixir-debugger`**
 Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
@@ -180,7 +191,6 @@ bootstrap only reinstalls packages that are actually missing.
 | gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
 | gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
 | graphviz binaries on /sgoinfre | ✅ | Re-extract from cached .debs, else re-download via `apt-get download` |
-| ollama binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from ollama/ollama Release |
 | ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |

@@ -18,6 +18,7 @@ install -m 0755 "$REPO_ROOT/bin/clangd-bootstrap"          "$HOME/Apps/bin/clang
 install -m 0755 "$REPO_ROOT/bin/gh-bootstrap"              "$HOME/Apps/bin/gh-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/graphviz-bootstrap"        "$HOME/Apps/bin/graphviz-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/ollama-bootstrap"          "$HOME/Apps/bin/ollama-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/aider-bootstrap"           "$HOME/Apps/bin/aider-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/jb-patch-elixir-debugger"  "$HOME/Apps/bin/jb-patch-elixir-debugger"
 install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
 
@@ -45,6 +46,7 @@ Then add a login-time hook to ~/.zprofile, e.g.:
   nohup \$HOME/Apps/bin/gh-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/graphviz-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/ollama-bootstrap &>/dev/null & disown
+  nohup \$HOME/Apps/bin/aider-bootstrap &>/dev/null & disown
 
 Adjust the JetBrains product code (IIU, WS, CL, …) and plugin list to taste.
 See README.md for the full list of supported products and plugin-spec syntax.
