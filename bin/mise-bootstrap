@@ -35,6 +35,17 @@ if [[ -x "$_wx_bootstrap" ]]; then
         # Erlang's wxe_driver.so dlopen()s the wx shared libs at runtime;
         # they live in sgoinfre, not on the system linker path.
         export LD_LIBRARY_PATH="${WX_HOME}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+        # Persist the wx lib path into ~/.profile so observer works in future
+        # shells too. Idempotent: keyed on the wx-sgoinfre marker comment.
+        if [[ -f "$HOME/.profile" ]] && ! grep -q "# wx-sgoinfre LD_LIBRARY_PATH" "$HOME/.profile"; then
+            cat >> "$HOME/.profile" <<'WXPROFILE'
+
+# wx-sgoinfre LD_LIBRARY_PATH — added by mise-bootstrap for :observer support
+_wx_lib="/sgoinfre/goinfre/Perso/${USER}/wx/3.2.6/lib"
+[[ -d "$_wx_lib" ]] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${_wx_lib}"
+unset _wx_lib
+WXPROFILE
+        fi
     else
         echo "[mise-bootstrap] WARNING: wx-bootstrap failed; observer will not work" >&2
         WX_HOME=""
