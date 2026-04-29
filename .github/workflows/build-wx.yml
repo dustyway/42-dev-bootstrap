@@ -80,7 +80,6 @@ jobs:
             --with-opengl \
             --enable-shared \
             --disable-debug \
-            --without-webview \
             CFLAGS="-O2 -pipe" \
             CXXFLAGS="-O2 -pipe"
           make -j"$(nproc)"
