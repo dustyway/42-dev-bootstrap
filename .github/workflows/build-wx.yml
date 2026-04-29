@@ -1,0 +1,128 @@
+name: Build wxWidgets
+
+# Builds wxWidgets from source on ubuntu-22.04 (matching the 42 cluster
+# glibc floor) and publishes a tarball of headers + shared libs as a GitHub
+# Release asset. wx-bootstrap pulls from these releases so Erlang can be
+# compiled with wx/observer support on machines without root.
+#
+# Trigger by pushing a tag named wx-<VERSION>, e.g.:
+#   git tag wx-3.2.6 && git push origin wx-3.2.6
+# Or run manually via the Actions UI (workflow_dispatch).
+#
+# The tarball is extracted to $SGO/wx/<VERSION>/ on the cluster. wx-bootstrap
+# patches the embedded /opt/wx prefix in wx-config to the actual install path.
+
+on:
+  push:
+    tags:
+      - "wx-*"
+  workflow_dispatch:
+    inputs:
+      wx_version:
+        description: "wxWidgets version (e.g. 3.2.6)"
+        required: true
+        default: "3.2.6"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            v="${{ inputs.wx_version }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+            v="${tag#wx-}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=wx-$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libgtk-3-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            libpng-dev \
+            libjpeg-dev \
+            libexpat1-dev \
+            libnotify-dev
+
+      - name: Download wxWidgets source
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-max-time 300 \
+            -o "wxWidgets-${v}.tar.bz2" \
+            "https://github.com/wxWidgets/wxWidgets/releases/download/v${v}/wxWidgets-${v}.tar.bz2"
+
+      - name: Build wxWidgets
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          tar -xf "wxWidgets-${v}.tar.bz2"
+          mkdir wx-build && cd wx-build
+          "../wxWidgets-${v}/configure" \
+            --prefix=/opt/wx \
+            --with-gtk=3 \
+            --enable-unicode \
+            --with-opengl \
+            --enable-shared \
+            --disable-debug \
+            --without-webview \
+            CFLAGS="-O2 -pipe" \
+            CXXFLAGS="-O2 -pipe"
+          make -j"$(nproc)"
+          sudo make install
+
+      - name: Stage and package tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          STAGING="$GITHUB_WORKSPACE/staging/wx-${v}"
+          mkdir -p "$STAGING"
+
+          # Headers, wx-config, and shared libs. Skip static .a and libtool .la
+          # files — shared linking is all we need and they bloat the tarball.
+          cp -a /opt/wx/bin "$STAGING/"
+          cp -a /opt/wx/include "$STAGING/"
+          cp -a /opt/wx/lib "$STAGING/"
+          find "$STAGING/lib" \( -name "*.a" -o -name "*.la" \) -delete
+
+          # pkgconfig .pc files embed /opt/wx; the bootstrap script patches them
+          # along with wx-config, so leave them in place.
+
+          out="wx-${v}-linux-x86_64.tar.gz"
+          tar -C staging -czf "$out" "wx-${v}"
+          sha256sum "$out" > "${out}.sha256"
+          ls -lh "$out" "${out}.sha256"
+
+      - name: Smoke-test
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          mkdir check
+          tar -xzf "wx-${v}-linux-x86_64.tar.gz" -C check --strip-components=1
+          # Patch the prefix so wx-config resolves paths correctly.
+          sed -i "s|/opt/wx|$PWD/check|g" check/bin/wx-config
+          check/bin/wx-config --version
+          check/bin/wx-config --libs | grep -q "lwx"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          files: |
+            wx-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
+            wx-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz.sha256
+          generate_release_notes: true

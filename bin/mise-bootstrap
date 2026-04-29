@@ -16,16 +16,63 @@ export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
 mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
 
-# 1. Install any mise-pinned runtime that's missing. `mise install` with no
+# 1. If wx-bootstrap is available, install wxWidgets to sgoinfre and configure
+#    KERL so Erlang compiles with wx/observer support. Without this, the Erlang
+#    wx application (and therefore :observer) is silently absent because the
+#    cluster machines don't have libwxgtk-dev installed and we don't have root.
+WX_HOME=""
+if command -v wx-bootstrap >/dev/null 2>&1; then
+    if WX_HOME=$(wx-bootstrap "${WX_VERSION:-3.2.6}"); then
+        # Tell KERL's Erlang ./configure where to find wx. Append to any
+        # existing value so other custom flags survive.
+        export KERL_CONFIGURE_OPTIONS="--with-wx-config=${WX_HOME}/bin/wx-config${KERL_CONFIGURE_OPTIONS:+ ${KERL_CONFIGURE_OPTIONS}}"
+        # Erlang's wxe_driver.so dlopen()s the wx shared libs at runtime;
+        # they live in sgoinfre, not on the system linker path.
+        export LD_LIBRARY_PATH="${WX_HOME}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    else
+        echo "[mise-bootstrap] WARNING: wx-bootstrap failed; observer will not work" >&2
+        WX_HOME=""
+    fi
+fi
+
+# 2. Install any mise-pinned runtime that's missing. `mise install` with no
 #    args reads ~/.config/mise/config.toml and installs what's not there.
 mise install
 
-# 2. Activate mise env so npm/node/mix resolve correctly in the rest of this
+# 3. Activate mise env so npm/node/mix resolve correctly in the rest of this
 #    script — `mise activate` is shell-hook-based and doesn't work in
 #    non-interactive scripts; `mise env` is the script-safe equivalent.
 eval "$(mise env -s bash)"
 
-# 3. Ensure Hex + rebar + phx_new are installed for the current Elixir.
+# 4. If wx was set up but the installed Erlang was compiled without it (common
+#    when wx wasn't present on a previous run), uninstall and reinstall so it
+#    picks up KERL_CONFIGURE_OPTIONS. The check probes for wxe_driver.so, which
+#    only exists when Erlang's configure found wx at build time.
+if [[ -n "$WX_HOME" ]] && command -v erl >/dev/null 2>&1; then
+    erlang_has_wx() {
+        erl -noshell -eval '
+          case code:lib_dir(wx) of
+            {error,_} -> halt(1);
+            D ->
+              F = filename:join([D, "priv", "wxe_driver.so"]),
+              case filelib:is_regular(F) of true -> halt(0); false -> halt(1) end
+          end.' 2>/dev/null
+    }
+    if ! erlang_has_wx; then
+        erlang_vsn=$(mise current erlang 2>/dev/null | awk '{print $1}' | head -1)
+        if [[ -n "$erlang_vsn" ]]; then
+            echo "[mise-bootstrap] Erlang ${erlang_vsn} lacks wx; reinstalling with wx support"
+            mise uninstall "erlang@${erlang_vsn}"
+            mise install
+            eval "$(mise env -s bash)"
+            if ! erlang_has_wx; then
+                echo "[mise-bootstrap] WARNING: Erlang still missing wx after reinstall" >&2
+            fi
+        fi
+    fi
+fi
+
+# 5. Ensure Hex + rebar + phx_new are installed for the current Elixir.
 #    These are per-Elixir-version installs, so a version bump (e.g. 1.18 ->
 #    1.19) otherwise prompts interactively on the next `mix deps.get` /
 #    `mix phx.new`. --if-missing makes hex/rebar fast no-ops; phx_new has
@@ -40,7 +87,7 @@ if command -v mix >/dev/null 2>&1; then
     fi
 fi
 
-# 4. Reinstall any global npm packages missing from the current node_modules.
+# 6. Reinstall any global npm packages missing from the current node_modules.
 #    We check existence by directory rather than `npm ls` because the latter
 #    is slow (~2 s cold) — dir-check is instant.
 GLOBALS="$HOME/Apps/etc/npm-globals.txt"
@@ -66,7 +113,7 @@ if [[ -s "$GLOBALS" ]]; then
     fi
 fi
 
-# 5. Sync IntelliJ SDK homePaths (Elixir/Erlang) with mise's current versions.
+# 7. Sync IntelliJ SDK homePaths (Elixir/Erlang) with mise's current versions.
 #    Safe no-op when the IDE isn't installed yet or the versions already match.
 if [[ -x "$HOME/Apps/bin/jb-sync-elixir-sdk" ]]; then
     "$HOME/Apps/bin/jb-sync-elixir-sdk" || true
