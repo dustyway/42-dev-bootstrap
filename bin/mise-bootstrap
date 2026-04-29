@@ -21,8 +21,12 @@ mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
 #    wx application (and therefore :observer) is silently absent because the
 #    cluster machines don't have libwxgtk-dev installed and we don't have root.
 WX_HOME=""
-if command -v wx-bootstrap >/dev/null 2>&1; then
-    if WX_HOME=$(wx-bootstrap "${WX_VERSION:-3.2.6}"); then
+# Resolve wx-bootstrap relative to this script so it works whether the user
+# runs from the repo directly or copies scripts to ~/Apps/bin individually.
+_wx_bootstrap="$(cd "$(dirname "$0")" && pwd)/wx-bootstrap"
+[[ -x "$_wx_bootstrap" ]] || _wx_bootstrap="$(command -v wx-bootstrap 2>/dev/null || true)"
+if [[ -x "$_wx_bootstrap" ]]; then
+    if WX_HOME=$("$_wx_bootstrap" "${WX_VERSION:-3.2.6}"); then
         # Tell KERL's Erlang ./configure where to find wx. Append to any
         # existing value so other custom flags survive.
         export KERL_CONFIGURE_OPTIONS="--with-wx-config=${WX_HOME}/bin/wx-config${KERL_CONFIGURE_OPTIONS:+ ${KERL_CONFIGURE_OPTIONS}}"
@@ -34,6 +38,7 @@ if command -v wx-bootstrap >/dev/null 2>&1; then
         WX_HOME=""
     fi
 fi
+unset _wx_bootstrap
 
 # 2. Install any mise-pinned runtime that's missing. `mise install` with no
 #    args reads ~/.config/mise/config.toml and installs what's not there.
