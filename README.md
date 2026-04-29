@@ -39,9 +39,19 @@ Supported product codes: `IIU IIC WS PS PCP PCC CL GO RM RD DG AC RR`
 CLion, GoLand, RubyMine, Rider, DataGrip, Aqua, RustRover).
 
 **`mise-bootstrap`**
-Restores mise-managed runtimes (Node / Go / Elixir / Erlang / …) and global
-npm packages after a `/sgoinfre` wipe. Pulls pins from `~/.config/mise/config.toml`
-and globals from `~/Apps/etc/npm-globals.txt`. Idempotent.
+Restores mise-managed runtimes and per-tool extras after a `/sgoinfre` wipe.
+Reads tool pins from `~/.config/mise/config.toml` and auto-detects which
+extras to install — only sets up what's relevant to your config:
+
+| Tool in config | What mise-bootstrap adds |
+|---|---|
+| `erlang` | Downloads wxWidgets 3.2 to `/sgoinfre` via `wx-bootstrap`; switches to the `asdf-erlang` plugin so kerl compiles Erlang from source with `--with-wx-config` pointing at that build. Without this, `:observer.start()` fails — the cluster machines have no `libwxgtk-dev` and the core mise backend ships a pre-built Erlang linked against wx 3.0 which isn't available. |
+| `erlang` or `elixir` | Appends a wx lib path to `~/.profile` (`LD_LIBRARY_PATH`) so `:observer` finds the shared libs in every future shell; appends a logger filter to `~/.iex.exs` that silences the cosmetic GTK3 style-context warnings wx emits on older distros. |
+| `elixir` | Installs `hex`, `rebar`, and `phx_new` archives for the active Elixir version (a version bump would otherwise prompt interactively on the next `mix deps.get`). |
+| `node` | Re-installs any global npm packages missing from `~/Apps/etc/npm-globals.txt`. |
+
+Both `~/.profile` and `~/.iex.exs` edits are idempotent — keyed on marker
+comments, so re-runs are no-ops.
 
 **`emacs-bootstrap`**
 Installs a modern Emacs (tree-sitter + native-comp, GTK3/X11) from a tarball
@@ -162,18 +172,20 @@ Backgrounded so they don't block the login.
 ## mise runtime pinning
 
 Declare runtimes in `~/.config/mise/config.toml` (or via `mise use --global`).
-`mise-bootstrap` reads this on login and reinstalls anything missing.
+`mise-bootstrap` reads this on login, reinstalls anything missing, and
+auto-detects which per-tool extras to apply.
 
 ```toml
 [tools]
-node = "22"
+node = "22"       # → npm globals from ~/Apps/etc/npm-globals.txt
 go = "1.26.2"
-elixir = "1.18.2"
-erlang = "27.2"
+elixir = "1.19.5" # → hex / rebar / phx_new archives; IEx GTK filter
+erlang = "27.2"   # → wx 3.2 build; asdf-erlang source compile; LD_LIBRARY_PATH
 ```
 
-Global npm packages live in `~/Apps/etc/npm-globals.txt`, one per line. The
-bootstrap only reinstalls packages that are actually missing.
+Only add the tools you actually use — the bootstrap skips every section whose
+tool isn't in your config. Global npm packages live in
+`~/Apps/etc/npm-globals.txt`, one per line.
 
 ## Self-healing matrix
 
