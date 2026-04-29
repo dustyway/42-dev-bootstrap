@@ -27,9 +27,11 @@ _wx_bootstrap="$(cd "$(dirname "$0")" && pwd)/wx-bootstrap"
 [[ -x "$_wx_bootstrap" ]] || _wx_bootstrap="$(command -v wx-bootstrap 2>/dev/null || true)"
 if [[ -x "$_wx_bootstrap" ]]; then
     if WX_HOME=$("$_wx_bootstrap" "${WX_VERSION:-3.2.6}"); then
-        # Tell KERL's Erlang ./configure where to find wx. Append to any
-        # existing value so other custom flags survive.
+        # Tell KERL's Erlang ./configure where to find wx. Also write ~/.kerlrc
+        # because mise does not propagate exported env vars into plugin install
+        # subprocesses, so KERL_CONFIGURE_OPTIONS must come from the config file.
         export KERL_CONFIGURE_OPTIONS="--with-wx-config=${WX_HOME}/bin/wx-config${KERL_CONFIGURE_OPTIONS:+ ${KERL_CONFIGURE_OPTIONS}}"
+        printf 'KERL_CONFIGURE_OPTIONS="%s"\n' "$KERL_CONFIGURE_OPTIONS" > "$HOME/.kerlrc"
         # Erlang's wxe_driver.so dlopen()s the wx shared libs at runtime;
         # they live in sgoinfre, not on the system linker path.
         export LD_LIBRARY_PATH="${WX_HOME}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -40,42 +42,20 @@ if [[ -x "$_wx_bootstrap" ]]; then
 fi
 unset _wx_bootstrap
 
-# 2. Install any mise-pinned runtime that's missing. `mise install` with no
+# 2. Ensure the asdf-erlang plugin is active so mise compiles Erlang from source
+#    via kerl, which respects KERL_CONFIGURE_OPTIONS set above. The core mise
+#    erlang backend downloads a pre-built binary that ignores those options and
+#    ships with wx 3.0 baked in, which doesn't match our sgoinfre wx 3.2.x.
+mise plugin add erlang https://github.com/asdf-vm/asdf-erlang 2>/dev/null || true
+
+# 3. Install any mise-pinned runtime that's missing. `mise install` with no
 #    args reads ~/.config/mise/config.toml and installs what's not there.
 mise install
 
-# 3. Activate mise env so npm/node/mix resolve correctly in the rest of this
+# 4. Activate mise env so npm/node/mix resolve correctly in the rest of this
 #    script — `mise activate` is shell-hook-based and doesn't work in
 #    non-interactive scripts; `mise env` is the script-safe equivalent.
 eval "$(mise env -s bash)"
-
-# 4. If wx was set up but the installed Erlang was compiled without it (common
-#    when wx wasn't present on a previous run), uninstall and reinstall so it
-#    picks up KERL_CONFIGURE_OPTIONS. The check probes for wxe_driver.so, which
-#    only exists when Erlang's configure found wx at build time.
-if [[ -n "$WX_HOME" ]] && command -v erl >/dev/null 2>&1; then
-    erlang_has_wx() {
-        erl -noshell -eval '
-          case code:lib_dir(wx) of
-            {error,_} -> halt(1);
-            D ->
-              F = filename:join([D, "priv", "wxe_driver.so"]),
-              case filelib:is_regular(F) of true -> halt(0); false -> halt(1) end
-          end.' 2>/dev/null
-    }
-    if ! erlang_has_wx; then
-        erlang_vsn=$(mise current erlang 2>/dev/null | awk '{print $1}' | head -1)
-        if [[ -n "$erlang_vsn" ]]; then
-            echo "[mise-bootstrap] Erlang ${erlang_vsn} lacks wx; reinstalling with wx support"
-            mise uninstall "erlang@${erlang_vsn}"
-            mise install
-            eval "$(mise env -s bash)"
-            if ! erlang_has_wx; then
-                echo "[mise-bootstrap] WARNING: Erlang still missing wx after reinstall" >&2
-            fi
-        fi
-    fi
-fi
 
 # 5. Ensure Hex + rebar + phx_new are installed for the current Elixir.
 #    These are per-Elixir-version installs, so a version bump (e.g. 1.18 ->
