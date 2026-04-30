@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+# cuda-bootstrap — rootless CUDA 12 + cuDNN 9 + NCCL 2 for sgoinfre.
+#
+# Downloads .deb packages from NVIDIA's official CUDA network repo for Ubuntu
+# 22.04 (jammy), extracts them to $SGO/cuda/lib/, and creates minimal NVSHMEM
+# stubs. No sudo required. Safe to re-run every login (idempotent).
+#
+# Required by: EXLA 0.11+ (xla 0.10+) with XLA_TARGET=cuda12 for GPU-
+# accelerated Nx/Axon. After running this, recompile EXLA in your project:
+#
+#   XLA_TARGET=cuda12 mix deps.compile exla --force
+#
+# Why NVSHMEM stubs: libxla_extension.so lists three NVSHMEM libraries as hard
+# NEEDED entries. NVSHMEM is NVIDIA's multi-node GPU communication library —
+# only called for distributed collective ops, never for single-GPU inference or
+# training. Empty stubs with the right SONAMEs satisfy the dynamic linker at
+# startup; lazy symbol binding means NVSHMEM is never actually resolved.
+#
+# Usage:  cuda-bootstrap [CUDA_PKG_SUFFIX]
+#   CUDA_PKG_SUFFIX  apt package suffix for the CUDA minor version.
+#                    Default: 12-9 (CUDA 12.9, matches XLA's nvrtc-builtins SONAME).
+#                    Override: cuda-bootstrap 12-8
+#
+# ─── Placement ────────────────────────────────────────────────────────────────
+# Libraries   → $SGO/cuda/lib/           extracted .so files + NVSHMEM stubs
+# Cached debs → $SGO/.cache/cuda-debs/  ~2.5 GB, kept for re-extract after wipes
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+CUDA_PKG="${1:-12-9}"
+REPO_BASE="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[cuda-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+CUDA_DIR="$SGO/cuda"
+LIB_DIR="$CUDA_DIR/lib"
+BIN_DIR="$CUDA_DIR/bin"
+NVVM_DIR="$CUDA_DIR/nvvm"
+CACHE_DIR="$SGO/.cache/cuda-debs"
+MARKER="$CUDA_DIR/.cuda-bootstrap-version"
+
+mkdir -p "$LIB_DIR" "$BIN_DIR" "$NVVM_DIR" "$CACHE_DIR"
+
+# ── Idempotency check ─────────────────────────────────────────────────────────
+installed=""
+[[ -f "$MARKER" ]] && installed=$(cat "$MARKER")
+
+if [[ "$installed" == "$CUDA_PKG" && \
+      -f "$LIB_DIR/libcudart.so.12" && \
+      -f "$LIB_DIR/libcudnn.so.9" && \
+      -f "$LIB_DIR/libnccl.so.2" && \
+      -f "$LIB_DIR/libnvshmem_host.so.3" && \
+      -f "$BIN_DIR/ptxas" && \
+      -f "$NVVM_DIR/libdevice/libdevice.10.bc" ]]; then
+    exit 0
+fi
+
+[[ -n "$installed" && "$installed" != "$CUDA_PKG" ]] && \
+    echo "[cuda-bootstrap] switching version: '$installed' -> '$CUDA_PKG'"
+
+# ── Fetch Packages index ──────────────────────────────────────────────────────
+echo "[cuda-bootstrap] fetching NVIDIA package index..."
+PKGS_TMP=$(mktemp)
+trap 'rm -f "$PKGS_TMP"' EXIT
+curl -fsSL --retry 3 "${REPO_BASE}/Packages.gz" | gunzip > "$PKGS_TMP"
+
+# Returns the repo-relative .deb path for the first matching package name.
+find_pkg() {
+    awk -v target="$1" '
+        /^Package: / { pkg = $2 }
+        /^Filename: / && pkg == target { print $2; exit }
+    ' "$PKGS_TMP"
+}
+
+# Returns the repo-relative .deb path for the LAST matching package name
+# (useful for packages like libnccl2 that appear many times with different
+# CUDA-version suffixes; the last entry in the index is typically the newest).
+find_pkg_last() {
+    awk -v target="$1" '
+        /^Package: / { pkg = $2 }
+        /^Filename: / && pkg == target { last = $2 }
+        END { print last }
+    ' "$PKGS_TMP"
+}
+
+# ── Download + extract one .deb, flattening into LIB_DIR / BIN_DIR ───────────
+install_deb() {
+    local pkg="$1" use_last="${2:-}"
+    local relpath
+    if [[ -n "$use_last" ]]; then
+        relpath=$(find_pkg_last "$pkg")
+    else
+        relpath=$(find_pkg "$pkg")
+    fi
+    if [[ -z "$relpath" ]]; then
+        echo "[cuda-bootstrap] WARNING: '$pkg' not found in repo — skipping" >&2
+        return 0
+    fi
+    local fname
+    fname=$(basename "$relpath")
+    local cached="$CACHE_DIR/$fname"
+
+    if [[ ! -s "$cached" ]]; then
+        echo "[cuda-bootstrap] downloading $pkg ..."
+        curl -fL --retry 3 -o "$cached" "${REPO_BASE}/${relpath#./}"
+    fi
+
+    echo "[cuda-bootstrap] extracting $fname ..."
+    local tmp
+    tmp=$(mktemp -d)
+    dpkg --extract "$cached" "$tmp"
+
+    # Flatten all shared libraries into LIB_DIR.
+    # Debian runtime packages ship both the versioned file (.so.X.Y.Z) and its
+    # SONAME symlink (.so.X or .so.X.Y) in the same package; both land here.
+    find "$tmp" \( -name '*.so*' \) \( -type f -o -type l \) | while IFS= read -r f; do
+        local bname dest target
+        bname=$(basename "$f")
+        dest="$LIB_DIR/$bname"
+        if [[ -L "$f" ]]; then
+            target=$(readlink "$f")
+            # Targets may be absolute paths (/usr/lib/…) — strip to filename so
+            # the symlink resolves correctly inside our flat LIB_DIR.
+            [[ "$target" = /* ]] && target=$(basename "$target")
+            ln -sf "$target" "$dest" 2>/dev/null || true
+        else
+            install -m 0755 "$f" "$dest"
+        fi
+    done
+
+    # Flatten executables from any bin/ directory into BIN_DIR.
+    # cuda-nvcc packages ship ptxas, nvlink, etc. under usr/local/cuda-X.Y/bin/.
+    find "$tmp" -path '*/bin/*' \( -type f -o -type l \) | while IFS= read -r f; do
+        local bname dest target
+        bname=$(basename "$f")
+        dest="$BIN_DIR/$bname"
+        if [[ -L "$f" ]]; then
+            target=$(readlink "$f")
+            [[ "$target" = /* ]] && target=$(basename "$target")
+            ln -sf "$target" "$dest" 2>/dev/null || true
+        else
+            install -m 0755 "$f" "$dest"
+        fi
+    done
+
+    # Preserve nvvm/ tree (contains libdevice.10.bc for XLA GPU code generation).
+    # XLA needs this at --xla_gpu_cuda_data_dir/nvvm/libdevice/libdevice.10.bc.
+    for nvvm_src in "$tmp"/usr/local/cuda-*/nvvm; do
+        [[ -d "$nvvm_src" ]] && cp -rn "$nvvm_src/." "$NVVM_DIR/"
+    done
+
+    rm -rf "$tmp"
+}
+
+# ── CUDA toolkit ──────────────────────────────────────────────────────────────
+# Package naming notes:
+#   cuda-cudart-12-9   → libcudart.so.12  (CUDA runtime)
+#   cuda-nvrtc-12-9    → libnvrtc.so.12 + libnvrtc-builtins.so.12.9  (bundled together)
+#   cuda-nvcc-12-9     → ptxas, nvlink  (PTX assembler — required by XLA kernel JIT)
+#   cuda-nvvm-12-9     → nvvm/libdevice/libdevice.10.bc  (device IR for GPU code gen)
+#   libcublas-12-9     → libcublas.so.12, libcublasLt.so.12
+#   libcufft-12-9      → libcufft.so.11
+#   libcusparse-12-9   → libcusparse.so.12
+#   libnvjitlink-12-9  → libnvJitLink.so.12
+for pkg in \
+    "cuda-cudart-${CUDA_PKG}" \
+    "cuda-nvrtc-${CUDA_PKG}" \
+    "cuda-nvcc-${CUDA_PKG}" \
+    "cuda-nvvm-${CUDA_PKG}" \
+    "libcublas-${CUDA_PKG}" \
+    "libcufft-${CUDA_PKG}" \
+    "libcusparse-${CUDA_PKG}" \
+    "libnvjitlink-${CUDA_PKG}"; do
+    install_deb "$pkg"
+done
+
+# libnccl2 appears many times (one per CUDA version). Use last = newest.
+install_deb "libnccl2" last
+
+# ── cuDNN 9 ───────────────────────────────────────────────────────────────────
+# libcudnn9-cuda-12    → libcudnn.so.9 + all static component .so files
+# libcudnn9-jit-cuda-12 → libcudnn_engines_runtime_compiled.so.9
+for pkg in "libcudnn9-cuda-12" "libcudnn9-jit-cuda-12"; do
+    install_deb "$pkg" last
+done
+
+# ── NVSHMEM stubs ─────────────────────────────────────────────────────────────
+# libxla_extension.so (XLA's precompiled CUDA binary) has hard NEEDED entries
+# for three NVSHMEM 3 libraries. NVSHMEM is only required for multi-node GPU
+# collective communication. For single-GPU workloads the symbols are never
+# resolved: stubs with the right SONAMEs satisfy the dynamic linker at startup.
+#
+# libnvshmem_host.so.3 requires 68 symbols tagged @NVSHMEM in the version table.
+# A plain empty-symbol stub causes "undefined symbol: nvshmem_malloc, version
+# NVSHMEM" at load time. We generate a C source + GNU version script inline.
+echo "[cuda-bootstrap] creating NVSHMEM stubs..."
+
+if [[ ! -f "$LIB_DIR/libnvshmem_host.so.3" ]]; then
+    _src=$(mktemp /tmp/nvshmem_host_XXXXXX.c)
+    _map=$(mktemp /tmp/nvshmem_map_XXXXXX)
+
+    cat > "$_src" <<'NVSHMEM_C'
+void nvshmem_fence(void) {}
+void nvshmem_free(void *p) {}
+void nvshmem_global_exit(int s) {}
+void *nvshmem_malloc(unsigned long n) { return (void*)0; }
+int  nvshmem_team_my_pe(int t) { return 0; }
+int  nvshmem_team_n_pes(int t) { return 0; }
+void nvshmemx_barrier_on_stream(int t, void *s) {}
+void nvshmemx_bfloat16_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_bfloat16_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_bfloat16_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_bfloat16_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_bfloat16_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_bfloat16_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_double_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_double_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_double_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_double_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_double_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_double_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_float_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_float_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_float_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_float_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_float_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_float_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_get_uniqueid(void *uid) {}
+void nvshmemx_half_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_half_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_half_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_half_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_half_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_half_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_hostlib_finalize(void) {}
+void nvshmemx_hostlib_init_attr(unsigned int f, void *a) {}
+void nvshmemx_int32_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_int32_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int32_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int32_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int32_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_int32_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int64_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_int64_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int64_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int64_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int64_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_int64_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int8_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int8_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int8_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_int8_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_quiet_on_stream(void *st) {}
+void nvshmemx_set_attr_uniqueid_args(unsigned int f, void *uid, void *a) {}
+void nvshmemx_uint32_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_uint32_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint32_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint32_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint32_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_uint32_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint64_get_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_uint64_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint64_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint64_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint64_put_nbi_on_stream(void *d, const void *s, unsigned long n, int pe, void *st) {}
+void nvshmemx_uint64_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint8_max_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint8_min_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint8_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+void nvshmemx_uint8_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
+NVSHMEM_C
+
+    cat > "$_map" <<'NVSHMEM_MAP'
+NVSHMEM {
+    global:
+        nvshmem_fence; nvshmem_free; nvshmem_global_exit; nvshmem_malloc;
+        nvshmem_team_my_pe; nvshmem_team_n_pes;
+        nvshmemx_barrier_on_stream;
+        nvshmemx_bfloat16_get_nbi_on_stream; nvshmemx_bfloat16_max_reduce_on_stream;
+        nvshmemx_bfloat16_min_reduce_on_stream; nvshmemx_bfloat16_prod_reduce_on_stream;
+        nvshmemx_bfloat16_put_nbi_on_stream; nvshmemx_bfloat16_sum_reduce_on_stream;
+        nvshmemx_double_get_nbi_on_stream; nvshmemx_double_max_reduce_on_stream;
+        nvshmemx_double_min_reduce_on_stream; nvshmemx_double_prod_reduce_on_stream;
+        nvshmemx_double_put_nbi_on_stream; nvshmemx_double_sum_reduce_on_stream;
+        nvshmemx_float_get_nbi_on_stream; nvshmemx_float_max_reduce_on_stream;
+        nvshmemx_float_min_reduce_on_stream; nvshmemx_float_prod_reduce_on_stream;
+        nvshmemx_float_put_nbi_on_stream; nvshmemx_float_sum_reduce_on_stream;
+        nvshmemx_get_uniqueid;
+        nvshmemx_half_get_nbi_on_stream; nvshmemx_half_max_reduce_on_stream;
+        nvshmemx_half_min_reduce_on_stream; nvshmemx_half_prod_reduce_on_stream;
+        nvshmemx_half_put_nbi_on_stream; nvshmemx_half_sum_reduce_on_stream;
+        nvshmemx_hostlib_finalize; nvshmemx_hostlib_init_attr;
+        nvshmemx_int32_get_nbi_on_stream; nvshmemx_int32_max_reduce_on_stream;
+        nvshmemx_int32_min_reduce_on_stream; nvshmemx_int32_prod_reduce_on_stream;
+        nvshmemx_int32_put_nbi_on_stream; nvshmemx_int32_sum_reduce_on_stream;
+        nvshmemx_int64_get_nbi_on_stream; nvshmemx_int64_max_reduce_on_stream;
+        nvshmemx_int64_min_reduce_on_stream; nvshmemx_int64_prod_reduce_on_stream;
+        nvshmemx_int64_put_nbi_on_stream; nvshmemx_int64_sum_reduce_on_stream;
+        nvshmemx_int8_max_reduce_on_stream; nvshmemx_int8_min_reduce_on_stream;
+        nvshmemx_int8_prod_reduce_on_stream; nvshmemx_int8_sum_reduce_on_stream;
+        nvshmemx_quiet_on_stream; nvshmemx_set_attr_uniqueid_args;
+        nvshmemx_uint32_get_nbi_on_stream; nvshmemx_uint32_max_reduce_on_stream;
+        nvshmemx_uint32_min_reduce_on_stream; nvshmemx_uint32_prod_reduce_on_stream;
+        nvshmemx_uint32_put_nbi_on_stream; nvshmemx_uint32_sum_reduce_on_stream;
+        nvshmemx_uint64_get_nbi_on_stream; nvshmemx_uint64_max_reduce_on_stream;
+        nvshmemx_uint64_min_reduce_on_stream; nvshmemx_uint64_prod_reduce_on_stream;
+        nvshmemx_uint64_put_nbi_on_stream; nvshmemx_uint64_sum_reduce_on_stream;
+        nvshmemx_uint8_max_reduce_on_stream; nvshmemx_uint8_min_reduce_on_stream;
+        nvshmemx_uint8_prod_reduce_on_stream; nvshmemx_uint8_sum_reduce_on_stream;
+    local: *;
+};
+NVSHMEM_MAP
+
+    gcc -x c -shared -fPIC \
+        -Wl,-soname,libnvshmem_host.so.3 \
+        -Wl,--version-script="$_map" \
+        -o "$LIB_DIR/libnvshmem_host.so.3" "$_src" \
+        || { echo "[cuda-bootstrap] gcc not found — cannot create NVSHMEM stubs" >&2; exit 1; }
+    rm -f "$_src" "$_map"
+fi
+
+# nvshmem_bootstrap_uid.so.3 and nvshmem_transport_ibrc.so.3 need only SONAME
+for soname in "nvshmem_bootstrap_uid.so.3" "nvshmem_transport_ibrc.so.3"; do
+    [[ -f "$LIB_DIR/$soname" ]] && continue
+    echo "void _stub(void) {}" \
+        | gcc -x c -shared -fPIC -Wl,-soname,"$soname" -o "$LIB_DIR/$soname" - \
+        || { echo "[cuda-bootstrap] gcc not found — cannot create NVSHMEM stubs" >&2; exit 1; }
+done
+
+# ── Write version marker ──────────────────────────────────────────────────────
+printf '%s' "$CUDA_PKG" > "$MARKER"
+
+# ── Wire LD_LIBRARY_PATH + PATH into ~/.profile ───────────────────────────────
+PROFILE_MARKER="# cuda-sgoinfre LD_LIBRARY_PATH"
+if [[ -f "$HOME/.profile" ]] && ! grep -q "$PROFILE_MARKER" "$HOME/.profile"; then
+    cat >> "$HOME/.profile" <<PROFILE_SNIPPET
+
+$PROFILE_MARKER — added by cuda-bootstrap
+_cuda_dir="$CUDA_DIR"
+[[ -d "\${_cuda_dir}/lib" ]] && export LD_LIBRARY_PATH="\${LD_LIBRARY_PATH:+\${LD_LIBRARY_PATH}:}\${_cuda_dir}/lib"
+[[ -d "\${_cuda_dir}/bin" ]] && export PATH="\${_cuda_dir}/bin:\${PATH}"
+[[ -d "\${_cuda_dir}/nvvm" ]] && export XLA_FLAGS="\${XLA_FLAGS:+\${XLA_FLAGS} }--xla_gpu_cuda_data_dir=\${_cuda_dir}"
+unset _cuda_dir
+PROFILE_SNIPPET
+fi
+
+echo "[cuda-bootstrap] done — CUDA ${CUDA_PKG/-/.} in $CUDA_DIR"
+echo ""
+echo "To activate in the current shell:"
+echo "  export LD_LIBRARY_PATH=\"\${LD_LIBRARY_PATH:+\${LD_LIBRARY_PATH}:}${LIB_DIR}\""
+echo "  export PATH=\"${BIN_DIR}:\${PATH}\""
+echo "  export XLA_FLAGS=\"\${XLA_FLAGS:+\${XLA_FLAGS} }--xla_gpu_cuda_data_dir=${CUDA_DIR}\""
+echo ""
+echo "To compile EXLA with GPU support (run once in your project):"
+echo "  XLA_TARGET=cuda12 mix deps.compile exla --force"
