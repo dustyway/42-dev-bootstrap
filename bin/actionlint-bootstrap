@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# actionlint-bootstrap — install/heal actionlint on 42 cluster machines via
+# the upstream rhysd/actionlint prebuilt releases. Safe to run every login
+# (idempotent).
+#
+# Pulls the prebuilt linux_amd64 tarball from
+# https://github.com/rhysd/actionlint/releases and extracts to /sgoinfre so
+# it persists across /goinfre wipes. The actionlint binary is symlinked into
+# ~/bin, which Ubuntu's default ~/.profile prepends to PATH.
+#
+# Why this exists: actionlint is not in apt; the prebuilt binary is a single
+# static Go binary that needs nothing but the kernel.
+#
+# Usage:  actionlint-bootstrap [VERSION]
+#
+# ─── Placement ───────────────────────────────────────────────────────────────
+# App binary     → $SGO/actionlint/<version>/actionlint   persistent on sgoinfre
+# Cached tarball → $SGO/.cache/actionlint_<v>_linux_amd64.tar.gz
+# Launcher       → ~/bin/actionlint                       symlink, tiny
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-1.7.7}"
+ASSET="actionlint_${VERSION}_linux_amd64.tar.gz"
+CHECKSUMS="actionlint_${VERSION}_checksums.txt"
+BASE_URL="https://github.com/rhysd/actionlint/releases/download/v${VERSION}"
+URL="${BASE_URL}/${ASSET}"
+CHECKSUMS_URL="${BASE_URL}/${CHECKSUMS}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[actionlint-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/actionlint/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+SHAFILE="$SGO/.cache/${CHECKSUMS}"
+VERSION_MARKER="$APP_HOME/.actionlint-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/actionlint"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/actionlint" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[actionlint-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL" "$SHAFILE"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[actionlint-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        curl -fsSL -o "$SHAFILE" "$CHECKSUMS_URL"
+        (cd "$(dirname "$TARBALL")" && grep " ${ASSET}\$" "$(basename "$SHAFILE")" | sha256sum -c -) \
+            || { echo "[actionlint-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+    fi
+    echo "[actionlint-bootstrap] installing actionlint $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    # The tarball contains the binary at the top level with no subdirectory.
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" actionlint
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+mkdir -p "$HOME/bin"
+ln -sf "$APP_HOME/actionlint" "$HOME/bin/actionlint"
