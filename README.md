@@ -127,6 +127,15 @@ for a fully-local coding loop:
 `OLLAMA_API_BASE` is exported in `profile.snippet` so aider's LiteLLM
 backend routes to your daemon automatically.
 
+**`tailscale-bootstrap`**
+Installs the [Tailscale](https://tailscale.com) VPN client without root using
+userspace-networking mode — no kernel TUN device, no routing-table changes.
+Traffic to the tailnet routes through a local SOCKS5 proxy at `127.0.0.1:1055`
+(`ALL_PROXY=socks5://127.0.0.1:1055`). The `~/bin/tailscale` wrapper
+auto-injects the non-default socket path so `tailscale up` / `tailscale status`
+work as-is. Auth state lives in `~/.config/tailscale/` (`$HOME`) — tiny,
+survives `/sgoinfre` wipes with no re-auth.
+
 **`jb-patch-elixir-debugger`**
 Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
 modern Elixir (1.15+) where `mix` runs with a reduced code path that drops
@@ -165,6 +174,7 @@ Finally, add a login-time hook in `~/.zprofile`. Example:
 nohup $HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & disown
 nohup $HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
+nohup $HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
 ```
 
 Backgrounded so they don't block the login.
@@ -206,6 +216,8 @@ tool isn't in your config. Global npm packages live in
 | ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
+| Tailscale binaries on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
+| Tailscale auth state | ✅ (implicit) | Lives in `~/.config/tailscale/` on $HOME; survives /sgoinfre wipes |
 | Project-specific settings (workspace/, history, recents) | ❌ | Not backed up — rebuild when you reopen the project |
 
 ## Possible future additions

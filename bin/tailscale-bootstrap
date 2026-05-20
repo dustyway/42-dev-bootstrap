@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# tailscale-bootstrap — install/heal the Tailscale VPN client on 42 cluster
+# machines without root. Safe to run every login (idempotent).
+#
+# Uses Tailscale's userspace-networking mode (no kernel TUN, no sudo).
+# Traffic reaches the tailnet through a SOCKS5 proxy at 127.0.0.1:1055.
+# The ~/bin/tailscale wrapper injects --socket so plain `tailscale up` works.
+# Auth state lives in ~/.config/tailscale/ ($HOME) — survives /sgoinfre wipes.
+#
+# Usage:  tailscale-bootstrap [VERSION]
+# Then:   tailscale up  (first time only, to authenticate)
+#         ALL_PROXY=socks5://127.0.0.1:1055 curl https://my-host.ts.net/
+#
+# ─── Placement ──────────────────────────────────────────────────────────────
+# App binaries   → $SGO/tailscale/<version>/bin/   persistent on sgoinfre
+# Cached tarball → $SGO/.cache/tailscale_<v>_amd64.tgz
+# State          → ~/.config/tailscale/            HOME, survives wipes
+# Socket         → /tmp/tailscale-$USER.sock       ephemeral
+# tailscale      → ~/bin/tailscale                 wrapper (injects --socket)
+# tailscaled     → ~/bin/tailscaled                symlink
+# Launcher       → ~/bin/tailscale-serve           written each run
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-1.82.0}"
+ASSET="tailscale_${VERSION}_amd64.tgz"
+URL="https://pkgs.tailscale.com/stable/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[tailscale-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/tailscale/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+VERSION_MARKER="$APP_HOME/.tailscale-bootstrap-version"
+STATE_DIR="$HOME/.config/tailscale"
+SOCKET="/tmp/tailscale-${USER}.sock"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/tailscale" "$STATE_DIR" "$HOME/bin"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/tailscaled" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[tailscale-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[tailscale-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        expected="$(curl -fsSL "${URL}.sha256")"
+        actual="$(sha256sum "$TARBALL" | awk '{print $1}')"
+        [[ "$expected" == "$actual" ]] || { echo "[tailscale-bootstrap] sha256 mismatch" >&2; rm -f "$TARBALL"; exit 1; }
+    fi
+    echo "[tailscale-bootstrap] installing tailscale $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp/bin"
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp/bin" --strip-components=1 \
+        "tailscale_${VERSION}_amd64/tailscale" \
+        "tailscale_${VERSION}_amd64/tailscaled"
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+# Wrapper injects --socket so `tailscale up` / `tailscale status` work as-is.
+cat > "$HOME/bin/tailscale" <<EOF
+#!/usr/bin/env bash
+exec "$APP_HOME/bin/tailscale" --socket="${SOCKET}" "\$@"
+EOF
+chmod +x "$HOME/bin/tailscale"
+
+ln -sf "$APP_HOME/bin/tailscaled" "$HOME/bin/tailscaled"
+
+# Launcher: idempotent, no-op if daemon already running.
+cat > "$HOME/bin/tailscale-serve" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+LOG="/tmp/tailscale-\${USER}.log"
+if "$HOME/bin/tailscale" status >/dev/null 2>&1; then
+    echo "[tailscale-serve] already running"
+    exit 0
+fi
+nohup "$HOME/bin/tailscaled" \\
+    --tun=userspace-networking \\
+    --socket="${SOCKET}" \\
+    --state="${STATE_DIR}/tailscaled.state" \\
+    --socks5-server=127.0.0.1:1055 \\
+    >>"\$LOG" 2>&1 &
+disown
+for _ in \$(seq 1 20); do
+    "$HOME/bin/tailscale" status >/dev/null 2>&1 && break
+    sleep 0.5
+done
+echo "[tailscale-serve] started (SOCKS5: 127.0.0.1:1055, log: \$LOG)"
+echo "[tailscale-serve] first time? run: tailscale up"
+EOF
+chmod +x "$HOME/bin/tailscale-serve"
+
+"$HOME/bin/tailscale-serve"
