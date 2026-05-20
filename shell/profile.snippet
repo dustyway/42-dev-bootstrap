@@ -6,6 +6,10 @@
 export PATH="$PATH:$HOME/Apps/bin:$HOME/go/bin"
 export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+# Add mise shims to PATH so GUI-launched apps (JetBrains IDEs from the GNOME
+# launcher, etc.) see node/npm/mix/iex/etc. Interactive zsh gets these via
+# `mise activate` in ~/.zshrc; .desktop launchers don't source ~/.zshrc.
+export PATH="$PATH:$MISE_DATA_DIR/shims"
 # uv tool venvs (aider, etc.) live on sgoinfre — Python deps are 200+ MB
 # each and would chew through the 5 GB $HOME quota.
 export UV_TOOL_DIR="/sgoinfre/goinfre/Perso/${USER}/uv-tools"
