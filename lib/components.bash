@@ -24,7 +24,7 @@ COMPONENTS=(
     "wx|wx-bootstrap|wx|wx-bootstrap|mise-bootstrap|safe|wxWidgets 3.2 for Erlang's :observer ~80 MB"
     "mise-data|mise-bootstrap|mise-data|mise-bootstrap|safe|mise runtimes (reads ~/.config/mise/config.toml) varies"
     "aider|aider-bootstrap|uv-tools/aider-chat|aider-bootstrap|safe|aider terminal pair-programmer via uv tool ~500 MB"
-    "opencode|opencode-bootstrap|mise-data/installs/github-anomalyco-opencode|opencode-bootstrap|safe|OpenCode AI coding agent via mise"
+    "opencode|opencode-bootstrap|mise-data/installs/github-anomalyco-opencode|opencode-bootstrap|mise-bootstrap|safe|OpenCode AI coding agent (restored transitively by mise-bootstrap)"
     "cuda|cuda-bootstrap|cuda|cuda-bootstrap|safe|CUDA libraries (extracts .debs without sudo) ~3.5 GB"
     "ollama|ollama-bootstrap|ollama|ollama-bootstrap|safe|Ollama daemon + model pulls from ~/Apps/etc/ollama-models.txt"
     "jetbrains/idea-ultimate|jb-bootstrap IIU|jetbrains/idea-ultimate|jb-bootstrap[[:space:]]+IIU([[:space:]@]|\$)|safe|IntelliJ IDEA Ultimate ~4 GB"
