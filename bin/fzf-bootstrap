@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# fzf-bootstrap — install fzf (junegunn/fzf) from upstream prebuilt releases.
+#
+# Usage:  fzf-bootstrap [VERSION]
+#
+# ─── Placement ────────────────────────────────────────────────────────────────
+# App binary     → $SGO/fzf/<version>/fzf       persistent on sgoinfre
+# Cached tarball → $SGO/.cache/fzf-<v>…tar.gz   ~1.5 MB, re-extract on wipe
+# Launcher       → ~/bin/fzf                    symlink, under quota
+
+set -euo pipefail
+
+VERSION="${1:-0.65.2}"
+ASSET="fzf-${VERSION}-linux_amd64.tar.gz"
+URL="https://github.com/junegunn/fzf/releases/download/v${VERSION}/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[fzf-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/fzf/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+VERSION_MARKER="$APP_HOME/.fzf-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/fzf"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/fzf" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[fzf-bootstrap] switching version: '$installed' -> '$VERSION'"
+        rm -f "$TARBALL"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[fzf-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+    fi
+    echo "[fzf-bootstrap] installing fzf $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    # The fzf tarball contains a bare `fzf` binary (no top-level dir).
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" fzf
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+mkdir -p "$HOME/bin"
+ln -sf "$APP_HOME/fzf" "$HOME/bin/fzf"

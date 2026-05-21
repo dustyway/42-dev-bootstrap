@@ -1,0 +1,487 @@
+#!/usr/bin/env bash
+# cleanup — list & uninstall components installed by 42-dev-bootstrap.
+#
+# Two removal modes:
+#   uninstall     remove files AND comment out the matching `*-bootstrap`
+#                 line(s) in shell init, so next login does NOT bring it back
+#   cleanup-only  remove files only — components whose init line is intact
+#                 will be re-downloaded on next login
+#
+# Usage:
+#   cleanup                            fzf TUI (default). In the picker:
+#                                        TAB / Shift-TAB   toggle selection
+#                                        Enter             commit as uninstall
+#                                        Ctrl-X            commit as cleanup
+#                                        Esc               abort
+#   cleanup --list                     text table instead of TUI (no removal)
+#   cleanup <name> [-y]                non-interactive: files only
+#   cleanup <name> --uninstall [-y]    non-interactive: files + init lines
+#   cleanup --all-safe [-y]            bulk: every "safe" component, files only
+#   cleanup --all-safe --uninstall     bulk uninstall
+#
+# Requires fzf for the TUI — run `fzf-bootstrap` once if it's missing.
+#
+# Components are classified "safe" (the matching bootstrap will reinstall on
+# next login) or "DATA" (user data, no bootstrap restores it).
+#
+# The "Login" column in the listing shows whether next login will reinstall
+# the component automatically — detected by grepping ~/.zprofile, ~/.profile,
+# ~/.zshrc, ~/.bashrc, ~/.bash_profile for the matching `<x>-bootstrap` call.
+#
+# Shim detection is dynamic: walks ~/bin, ~/.local/bin, and desktop entries,
+# resolves symlinks and greps wrapper scripts for paths under the doomed dir,
+# and chains transitively (a script that references a doomed shim is doomed).
+
+set -euo pipefail
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[cleanup] sgoinfre path not found for $USER" >&2; exit 1; }
+
+INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
+
+# name | path globs (colon-separated) | class | restore_pattern (ERE) | note
+# restore_pattern = "" means nothing in shell init restores it.
+COMPONENTS=(
+    "ollama|$SGO/ollama|safe|ollama-bootstrap|Models re-pulled by ollama-bootstrap from ~/Apps/etc/ollama-models.txt"
+    "jetbrains|$SGO/jetbrains:$SGO/.cache/jb-*.tar.gz|safe|jb-bootstrap|IDEs re-installed by jb-bootstrap"
+    "cuda|$SGO/cuda:$SGO/.cache/cuda-debs|safe|cuda-bootstrap|Re-extracted by cuda-bootstrap from cached .debs"
+    "mise-data|$SGO/mise-data|safe|mise-bootstrap|Runtimes re-installed by mise-bootstrap from ~/.config/mise/config.toml"
+    "uv-tools|$SGO/uv-tools|safe|aider-bootstrap|aider venv re-installed by aider-bootstrap"
+    "emacs|$SGO/emacs:$SGO/.cache/emacs-*.tar.gz:$SGO/.cache/emacs-*.tar.gz.sha256|safe|emacs-bootstrap|Re-installed by emacs-bootstrap"
+    "clangd|$SGO/clangd:$SGO/.cache/clangd-linux-*.zip|safe|clangd-bootstrap|Re-installed by clangd-bootstrap"
+    "wx|$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256|safe|wx-bootstrap|mise-bootstrap|Re-installed via mise-bootstrap when erlang is in mise config"
+    "tailscale|$SGO/tailscale:$SGO/.cache/tailscale_*.tgz|safe|tailscale-bootstrap|Re-installed by tailscale-bootstrap"
+    "gh|$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt|safe|gh-bootstrap|Re-installed by gh-bootstrap"
+    "postgres|$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256|safe|postgres-bootstrap|Server binary re-installed by postgres-bootstrap (data NOT removed)"
+    "act|$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt|safe|act-bootstrap|Re-installed by act-bootstrap"
+    "actionlint|$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt|safe|actionlint-bootstrap|Re-installed by actionlint-bootstrap"
+    "graphviz|$SGO/graphviz:$SGO/.cache/graphviz-*|safe|graphviz-bootstrap|Re-installed by graphviz-bootstrap"
+    "inotify-tools|$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256|safe|inotify-tools-bootstrap|Re-installed by inotify-tools-bootstrap"
+    "jetbrains-config|$SGO/jetbrains-config|DATA||IDE settings/plugins/keymaps. Curated backup at ~/Apps/etc/jetbrains-backup restores most of it."
+    "forum-pgdata|$SGO/forum-pgdata|DATA||PostgreSQL data directory. No bootstrap restores this."
+    "forum-build|$SGO/forum-build|DATA||Build artifacts. No bootstrap restores this."
+    "CLion_cache|$SGO/CLion_cache|DATA||CLion cache. Re-indexed on next launch (slow but automatic)."
+)
+
+# Parse a row by name — uses awk for the 5-field split because the wx
+# restore_pattern itself contains a `|` (alternation), so we can't just
+# `read -r ... <<<"$row"` which would over-split. Field 4 captures everything
+# from the 4th `|` up to the last one; field 5 is the trailing note.
+parse_row() {
+    local needle="$1" row
+    for row in "${COMPONENTS[@]}"; do
+        C_NAME=${row%%|*}
+        [[ "$C_NAME" != "$needle" ]] && continue
+        # Strip leading "name|"
+        local rest=${row#*|}
+        C_GLOBS=${rest%%|*}; rest=${rest#*|}
+        C_CLASS=${rest%%|*}; rest=${rest#*|}
+        # Last field is the note; everything before it (back to here) is the pattern.
+        C_NOTE=${rest##*|}
+        C_PATTERN=${rest%|*}
+        return 0
+    done
+    return 1
+}
+
+# ─── helpers ─────────────────────────────────────────────────────────────────
+
+expand_globs() {
+    local IFS=':' glob
+    read -ra globs <<<"$1"
+    for glob in "${globs[@]}"; do
+        # shellcheck disable=SC2206
+        local matches=( $glob )
+        for m in "${matches[@]}"; do
+            [[ -e "$m" ]] && printf '%s\n' "$m"
+        done
+    done
+}
+
+human_size() {
+    local path="$1"
+    [[ -e "$path" ]] || { echo "-"; return; }
+    du -sh "$path" 2>/dev/null | awk '{print $1}'
+}
+
+total_bytes() {
+    local sum=0 bytes
+    while IFS= read -r p; do
+        [[ -e "$p" ]] || continue
+        bytes=$(du -sb "$p" 2>/dev/null | awk '{print $1}')
+        sum=$((sum + bytes))
+    done
+    echo "$sum"
+}
+
+format_bytes() {
+    local b="$1"
+    if   (( b >= 1024**3 )); then awk -v b="$b" 'BEGIN{printf "%.1fG", b/1024/1024/1024}'
+    elif (( b >= 1024**2 )); then awk -v b="$b" 'BEGIN{printf "%.0fM", b/1024/1024}'
+    elif (( b >= 1024   )); then awk -v b="$b" 'BEGIN{printf "%.0fK", b/1024}'
+    else echo "${b}B"
+    fi
+}
+
+# Transitive shim detection: any symlink resolving inside a doomed path, or
+# any regular file whose body grep-matches a doomed path. Newly found shims
+# get added to the doomed set so files referencing them are pulled in next.
+detect_shims() {
+    local doomed=("$@")
+    local desktop_dir="$HOME/.local/share/applications"
+    local found=() candidates=() d entry
+
+    for d in "$HOME/bin" "$HOME/.local/bin"; do
+        [[ -d "$d" ]] || continue
+        for entry in "$d"/*; do [[ -e "$entry" ]] && candidates+=("$entry"); done
+    done
+    if [[ -d "$desktop_dir" ]]; then
+        for entry in "$desktop_dir"/*.desktop; do [[ -f "$entry" ]] && candidates+=("$entry"); done
+    fi
+
+    local progressed=1 c resolved hit p
+    while (( progressed )); do
+        progressed=0
+        local remaining=()
+        for c in "${candidates[@]}"; do
+            hit=0
+            if [[ -L "$c" ]]; then
+                resolved="$(readlink -f -- "$c" 2>/dev/null || true)"
+                for p in "${doomed[@]}"; do
+                    [[ "$resolved" == "$p" || "$resolved" == "$p"/* ]] && { hit=1; break; }
+                done
+            elif [[ -f "$c" ]]; then
+                for p in "${doomed[@]}"; do
+                    grep -qF -- "$p" "$c" 2>/dev/null && { hit=1; break; }
+                done
+            fi
+            if (( hit )); then
+                found+=("$c"); doomed+=("$c"); progressed=1
+            else
+                remaining+=("$c")
+            fi
+        done
+        candidates=("${remaining[@]}")
+    done
+
+    (( ${#found[@]} > 0 )) && printf '%s\n' "${found[@]}"
+}
+
+# Find non-commented lines in shell init files matching `<pattern>` (ERE).
+# Emits one record per line: "file<TAB>line_no<TAB>text".
+find_init_lines() {
+    local pattern="$1" file line_no text
+    [[ -z "$pattern" ]] && return 0
+    for file in "${INIT_FILES[@]}"; do
+        [[ -f "$file" ]] || continue
+        while IFS=: read -r line_no text; do
+            [[ -z "$line_no" ]] && continue
+            # Skip lines whose first non-blank char is '#'.
+            [[ "$text" =~ ^[[:space:]]*# ]] && continue
+            printf '%s\t%s\t%s\n' "$file" "$line_no" "$text"
+        done < <(grep -nE -- "$pattern" "$file" 2>/dev/null || true)
+    done
+}
+
+# Comment out the given lines (records from find_init_lines). Idempotent:
+# already-commented lines are skipped by find_init_lines, so a second run
+# is a no-op. The comment prefix uses today's date for auditability.
+comment_out_init_lines() {
+    local records=("$@")
+    [[ ${#records[@]} -eq 0 ]] && return 0
+
+    local today; today=$(date +%Y-%m-%d)
+    local prefix="# [cleanup ${today}] "
+
+    # Group by file → list of line numbers, descending so each edit doesn't
+    # shift subsequent line numbers within the same file.
+    declare -A by_file
+    local rec file line text
+    for rec in "${records[@]}"; do
+        IFS=$'\t' read -r file line text <<<"$rec"
+        by_file["$file"]+="$line "
+    done
+
+    for file in "${!by_file[@]}"; do
+        # Sort line numbers descending so sed -i in-place doesn't disturb
+        # later (lower) indices.
+        local sorted; sorted=$(echo "${by_file[$file]}" | tr ' ' '\n' | sort -rn | tr '\n' ' ')
+        for line in $sorted; do
+            # Prepend prefix to that specific line.
+            sed -i "${line}s|^|${prefix}|" "$file"
+        done
+        echo "[cleanup] commented out $(echo "${by_file[$file]}" | wc -w) line(s) in $file"
+    done
+}
+
+# ─── actions ─────────────────────────────────────────────────────────────────
+
+# Compute a short Login indicator for a component: number of matching init
+# lines, or "-" if none.
+login_status() {
+    local pattern="$1" n
+    [[ -z "$pattern" ]] && { echo "-"; return; }
+    n=$(find_init_lines "$pattern" | wc -l)
+    if (( n > 0 )); then echo "yes($n)"; else echo "-"; fi
+}
+
+list_all() {
+    local row name globs class pattern note paths size_str
+    local total_safe=0 total_data=0 bytes
+    printf "%-18s %8s  %-5s  %-7s  %s\n" "Component" "Size" "Class" "Login" "Notes"
+    printf "%-18s %8s  %-5s  %-7s  %s\n" "---------" "----" "-----" "-----" "-----"
+    for row in "${COMPONENTS[@]}"; do
+        parse_row "${row%%|*}"
+        name=$C_NAME; globs=$C_GLOBS; class=$C_CLASS; pattern=$C_PATTERN; note=$C_NOTE
+        mapfile -t paths < <(expand_globs "$globs")
+        (( ${#paths[@]} == 0 )) && continue
+        bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
+        size_str=$(format_bytes "$bytes")
+        printf "%-18s %8s  %-5s  %-7s  %s\n" "$name" "$size_str" "$class" "$(login_status "$pattern")" "$note"
+        if [[ "$class" == "safe" ]]; then total_safe=$((total_safe + bytes))
+        else total_data=$((total_data + bytes)); fi
+    done
+    echo
+    printf "Reclaimable (safe): %s\n" "$(format_bytes "$total_safe")"
+    printf "Reclaimable (DATA): %s\n" "$(format_bytes "$total_data")"
+    local used; used=$(du -sb "$SGO" 2>/dev/null | awk '{print $1}')
+    printf "sgoinfre usage:     %s of 30G quota\n" "$(format_bytes "$used")"
+    echo
+    echo "  cleanup <name>              remove files (auto-reinstalls if Login=yes)"
+    echo "  cleanup <name> --uninstall  remove files AND comment out init line(s)"
+    echo "  cleanup <name> -y           skip confirm"
+    echo "  cleanup --all-safe          remove every 'safe' component"
+}
+
+# Args: name, assume_yes (0|1), uninstall (0|1)
+remove_one() {
+    local name="$1" yes="$2" uninstall="$3"
+    if ! parse_row "$name"; then
+        echo "[cleanup] unknown component: $name" >&2
+        echo "          run 'cleanup' for the list" >&2
+        return 1
+    fi
+    mapfile -t paths < <(expand_globs "$C_GLOBS")
+    if (( ${#paths[@]} == 0 )); then
+        echo "[cleanup] nothing to remove for '$name' (already gone)"
+        # Still offer init-line cleanup if asked.
+        if (( uninstall )) && [[ -n "$C_PATTERN" ]]; then
+            mapfile -t init_recs < <(find_init_lines "$C_PATTERN")
+            (( ${#init_recs[@]} > 0 )) && comment_out_init_lines "${init_recs[@]}"
+        fi
+        return 0
+    fi
+    mapfile -t shims < <(detect_shims "${paths[@]}")
+    mapfile -t init_recs < <(find_init_lines "$C_PATTERN")
+
+    echo "Component: $name  ($C_CLASS)"
+    echo "Note: $C_NOTE"
+    echo
+    echo "Will remove:"
+    local p s rec
+    for p in "${paths[@]}"; do
+        printf "  %-60s  %s\n" "$p" "$(human_size "$p")"
+    done
+    if (( ${#shims[@]} > 0 )); then
+        echo
+        echo "Shims / desktop entries:"
+        for s in "${shims[@]}"; do printf "  %s\n" "$s"; done
+    fi
+
+    if (( ${#init_recs[@]} > 0 )); then
+        echo
+        if (( uninstall )); then
+            echo "Init lines to comment out (--uninstall):"
+        else
+            echo "Init lines (next login will reinstall — pass --uninstall to also comment these out):"
+        fi
+        for rec in "${init_recs[@]}"; do
+            IFS=$'\t' read -r f l t <<<"$rec"
+            printf "  %s:%s  %s\n" "$f" "$l" "$t"
+        done
+    fi
+
+    local bytes; bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
+    echo
+    echo "Total reclaim: $(format_bytes "$bytes")"
+
+    if [[ "$C_CLASS" == "DATA" ]]; then
+        echo
+        echo "  ⚠  Classified DATA — no bootstrap will restore it."
+    fi
+
+    if (( ! yes )); then
+        echo
+        read -r -p "Proceed? [y/N] " ans
+        [[ "$ans" =~ ^[Yy]$ ]] || { echo "[cleanup] aborted"; return 1; }
+    fi
+
+    for p in "${paths[@]}"; do rm -rf -- "$p"; done
+    for s in "${shims[@]}"; do rm -f  -- "$s"; done
+    echo "[cleanup] removed $name ($(format_bytes "$bytes") freed)"
+
+    if (( uninstall )) && (( ${#init_recs[@]} > 0 )); then
+        comment_out_init_lines "${init_recs[@]}"
+    fi
+}
+
+remove_all_safe() {
+    local yes="$1" uninstall="$2"
+    local doomed=()
+    for row in "${COMPONENTS[@]}"; do
+        parse_row "${row%%|*}"
+        [[ "$C_CLASS" == "safe" ]] || continue
+        mapfile -t paths < <(expand_globs "$C_GLOBS")
+        (( ${#paths[@]} > 0 )) && doomed+=("$C_NAME")
+    done
+    if (( ${#doomed[@]} == 0 )); then
+        echo "[cleanup] nothing to remove"
+        return 0
+    fi
+    echo "Will remove every 'safe' component:"
+    printf '  %s\n' "${doomed[@]}"
+    if (( uninstall )); then
+        echo
+        echo "(--uninstall: also commenting out matching init lines)"
+    fi
+    if (( ! yes )); then
+        echo
+        read -r -p "Proceed? [y/N] " ans
+        [[ "$ans" =~ ^[Yy]$ ]] || { echo "[cleanup] aborted"; return 1; }
+    fi
+    for name in "${doomed[@]}"; do
+        remove_one "$name" 1 "$uninstall"
+    done
+}
+
+# Dry-run "what would be removed" for one component. Used by fzf --preview.
+preview_one() {
+    local name="$1"
+    if ! parse_row "$name"; then echo "unknown component: $name"; return; fi
+    mapfile -t paths < <(expand_globs "$C_GLOBS")
+    if (( ${#paths[@]} == 0 )); then echo "(already gone)"; return; fi
+    mapfile -t shims < <(detect_shims "${paths[@]}")
+    mapfile -t init_recs < <(find_init_lines "$C_PATTERN")
+
+    printf "Component: %s  (%s)\n" "$C_NAME" "$C_CLASS"
+    printf "Note: %s\n\n" "$C_NOTE"
+    echo "Will remove:"
+    local p s rec
+    for p in "${paths[@]}"; do
+        printf "  %-45s  %s\n" "$p" "$(human_size "$p")"
+    done
+    if (( ${#shims[@]} > 0 )); then
+        echo; echo "Shims / desktop entries:"
+        for s in "${shims[@]}"; do printf "  %s\n" "$s"; done
+    fi
+    if (( ${#init_recs[@]} > 0 )); then
+        echo; echo "Init lines (next login will re-run these):"
+        for rec in "${init_recs[@]}"; do
+            IFS=$'\t' read -r f l t <<<"$rec"
+            printf "  %s:%s\n    %s\n" "$f" "$l" "$t"
+        done
+    fi
+    local bytes; bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
+    echo; echo "Total reclaim: $(format_bytes "$bytes")"
+}
+
+# fzf-driven multi-select picker. Mode is committed inside fzf via the exit
+# key — Enter commits as uninstall, Ctrl-X commits as cleanup-only, Esc aborts.
+# No post-fzf prompt; everything happens in the one TUI.
+tui_mode() {
+    if ! command -v fzf >/dev/null 2>&1; then
+        echo "[cleanup] fzf not found on PATH" >&2
+        echo "          install it with: fzf-bootstrap" >&2
+        exit 1
+    fi
+    local self; self="$(realpath "$0")"
+
+    local rows=() row bytes size_str login paths
+    for row in "${COMPONENTS[@]}"; do
+        parse_row "${row%%|*}"
+        mapfile -t paths < <(expand_globs "$C_GLOBS")
+        (( ${#paths[@]} == 0 )) && continue
+        bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
+        size_str=$(format_bytes "$bytes")
+        login=$(login_status "$C_PATTERN")
+        rows+=("$(printf '%-18s %7s  %-4s  %-8s  %s' "$C_NAME" "$size_str" "$C_CLASS" "$login" "$C_NOTE")")
+    done
+
+    local header="TAB / Shift-TAB toggle  •  Esc abort
+Enter   = Uninstall   (default — remove files AND comment out matching init lines)
+Ctrl-X  = Cleanup     (remove files only; reinstalls on next login if init line stays)"
+
+    # --expect=ctrl-x makes fzf print the pressed key on the first line of
+    # output if it was Ctrl-X; for Enter the first line is empty.
+    local fzf_out
+    fzf_out=$(printf '%s\n' "${rows[@]}" | \
+        fzf --multi \
+            --header="$header" \
+            --preview "$self --preview-of {1}" \
+            --preview-window=right:55%:wrap \
+            --bind 'tab:toggle+down,shift-tab:toggle+up' \
+            --expect=ctrl-x \
+            --layout=reverse \
+            --height=100%) || true
+
+    [[ -z "$fzf_out" ]] && { echo "[cleanup] aborted"; return 1; }
+
+    local key selections
+    key=$(printf '%s' "$fzf_out" | head -n1)
+    selections=$(printf '%s' "$fzf_out" | tail -n +2)
+    [[ -z "$selections" ]] && { echo "[cleanup] no components selected"; return 1; }
+
+    local mode uninstall
+    if [[ "$key" == "ctrl-x" ]]; then mode="cleanup-only"; uninstall=0
+    else                              mode="uninstall";    uninstall=1
+    fi
+
+    local names=() line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        names+=("${line%% *}")
+    done <<<"$selections"
+
+    echo "Mode: ${mode}"
+    echo "Selected: ${names[*]}"
+    local n
+    for n in "${names[@]}"; do
+        echo
+        remove_one "$n" 1 "$uninstall"
+    done
+}
+
+# ─── arg parsing ─────────────────────────────────────────────────────────────
+
+yes=0
+uninstall=0
+target=""
+preview_name=""
+expecting_preview=0
+for arg in "$@"; do
+    if (( expecting_preview )); then
+        preview_name="$arg"; expecting_preview=0; continue
+    fi
+    case "$arg" in
+        -y|--yes)        yes=1 ;;
+        --uninstall)     uninstall=1 ;;
+        --list)          target="--list" ;;
+        --preview-of)    expecting_preview=1 ;;
+        -h|--help)       sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --all-safe)      target="--all-safe" ;;
+        --*)             echo "[cleanup] unknown flag: $arg" >&2; exit 2 ;;
+        *)               target="$arg" ;;
+    esac
+done
+
+if [[ -n "$preview_name" ]]; then
+    preview_one "$preview_name"
+elif [[ "$target" == "--list" ]]; then
+    list_all
+elif [[ "$target" == "--all-safe" ]]; then
+    remove_all_safe "$yes" "$uninstall"
+elif [[ -z "$target" ]]; then
+    tui_mode
+else
+    remove_one "$target" "$yes" "$uninstall"
+fi

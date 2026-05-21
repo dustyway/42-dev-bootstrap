@@ -24,8 +24,10 @@ install -m 0755 "$REPO_ROOT/bin/cuda-bootstrap"            "$HOME/Apps/bin/cuda-
 install -m 0755 "$REPO_ROOT/bin/tailscale-bootstrap"       "$HOME/Apps/bin/tailscale-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/actionlint-bootstrap"      "$HOME/Apps/bin/actionlint-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/act-bootstrap"             "$HOME/Apps/bin/act-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/jb-patch-elixir-debugger"  "$HOME/Apps/bin/jb-patch-elixir-debugger"
 install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
+install -m 0755 "$REPO_ROOT/bin/cleanup"                   "$HOME/Apps/bin/cleanup"
 
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
     cp "$REPO_ROOT/etc/npm-globals.txt.example" "$HOME/Apps/etc/npm-globals.txt"
