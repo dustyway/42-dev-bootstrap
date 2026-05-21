@@ -481,38 +481,41 @@ apply_interactive() {
         echo "[42-dev-uninstall] unknown component: $name" >&2
         sleep 1; return 1
     fi
-    clear
-    preview_one "$name"
-    echo
-    cat <<EOF
-What should happen to '${C_NAME}'?
-  [c] Cleanup    — remove files only (will reinstall on next login if Login=yes)
-  [u] Uninstall  — remove files AND comment out matching init line(s)
-  [a] Abort      — do nothing, return to the picker
+    local self; self="$(realpath "$0")"
 
-EOF
-    local ans
-    read -r -p "Action? [c/u/a] " ans
-    case "${ans:-a}" in
-        c|C|u|U)
-            local mode="cleanup" uninstall_flag=0
-            if [[ "$ans" =~ ^[uU]$ ]]; then mode="uninstall"; uninstall_flag=1; fi
-            echo
-            local confirm
-            read -r -p "Confirm: ${mode} '${C_NAME}' — really do this? [y/N] " confirm
-            if [[ "$confirm" =~ ^[Yy]$ ]]; then
-                echo
-                remove_one "$name" 1 "$uninstall_flag"
-            else
-                echo "[42-dev-uninstall] aborted (no changes made)"
-            fi
-            echo
-            read -r -p "[press Enter to return to the picker] " _
-            ;;
-        *)
-            echo "[42-dev-uninstall] aborted"
-            ;;
+    # Nested fzf — keeps the user in TUI mode; selecting a row IS the
+    # confirmation (deliberate move + Enter, not a single keypress).
+    local choice
+    choice=$(printf '%s\n' \
+        "cleanup   — remove files only (will reinstall on next login if Login=yes)" \
+        "uninstall — remove files AND comment out matching init line(s)" \
+        "abort     — do nothing, return to the picker" \
+      | fzf --prompt="Action for '${C_NAME}' > " \
+            --preview "$self --preview-of '$name'" \
+            --preview-window=right:55%:wrap \
+            --layout=reverse \
+            --no-info \
+            --no-multi \
+            --height=100%) || true
+
+    local uninstall_flag=0
+    case "${choice%% *}" in
+        cleanup)   uninstall_flag=0 ;;
+        uninstall) uninstall_flag=1 ;;
+        *)         return 0 ;;  # abort or Esc
     esac
+
+    # Silent on success (fzf reload will show the row gone). On failure,
+    # show the captured output and pause so the user can read the error.
+    local output status
+    output=$(remove_one "$name" 1 "$uninstall_flag" 2>&1)
+    status=$?
+    if (( status != 0 )); then
+        clear
+        printf '%s\n' "$output"
+        echo
+        read -r -p "[press Enter to return to the picker] " _
+    fi
 }
 
 # fzf single-select picker. Pressing Enter on a row hands off to

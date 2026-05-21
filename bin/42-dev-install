@@ -164,55 +164,43 @@ install_interactive() {
         echo "[42-dev-install] unknown component: $name" >&2
         sleep 1; return 1
     fi
-    clear
-    preview_one "$name"
-    echo
-    cat <<EOF
-What would you like to do with '${C_NAME}'?
-  [i] Install            — run \`${C_CMD}\` once (no shell init changes)
-  [s] Install + autostart — install AND add a launch line to ~/.zprofile
-                           so the component is re-installed on each login
-                           (self-heals after /sgoinfre wipes)
-  [a] Abort              — do nothing, return to the picker
+    local self; self="$(realpath "$0")"
 
-EOF
-    local ans
-    read -r -p "Action? [i/s/a] " ans
+    # Nested fzf — picking a row is the action confirmation.
+    local choice
+    choice=$(printf '%s\n' \
+        "install            — run \`${C_CMD}\` once (no shell init changes)" \
+        "install+autostart  — install AND add a launch line to ~/.zprofile" \
+        "abort              — do nothing, return to the picker" \
+      | fzf --prompt="Action for '${C_NAME}' > " \
+            --preview "$self --preview-of '$name'" \
+            --preview-window=right:55%:wrap \
+            --layout=reverse \
+            --no-info \
+            --no-multi \
+            --height=100%) || true
 
     local with_autostart=0
-    case "${ans:-a}" in
-        i|I) ;;
-        s|S) with_autostart=1 ;;
-        *)   echo "[42-dev-install] aborted"; return 0 ;;
+    case "${choice%% *}" in
+        install)            ;;
+        install+autostart)  with_autostart=1 ;;
+        *)                  return 0 ;;  # abort or Esc
     esac
 
-    echo
-    local label="install"; (( with_autostart )) && label="install + autostart"
-    local confirm
-    read -r -p "Confirm: ${label} '${C_NAME}' — really do this? [y/N] " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "[42-dev-install] aborted (no changes made)"
-        echo
-        read -r -p "[press Enter to return to the picker] " _
-        return 0
-    fi
-
-    echo
+    # The bootstrap streams progress (downloads/extracts) — let it print
+    # live; pause only on failure so the user can read the tail.
+    clear
     echo "[42-dev-install] running: $C_CMD"
-    # Run the bootstrap. C_CMD is space-separated like `jb-bootstrap IIU`.
-    if ! eval "$HOME/Apps/bin/$C_CMD"; then
-        echo "[42-dev-install] bootstrap failed — aborting autostart change" >&2
-    elif (( with_autostart )); then
-        if add_autostart "$C_PATTERN" "$C_CMD"; then
-            echo
-            echo "[42-dev-install] added autostart line to ~/.zprofile"
-        else
-            echo
-            echo "[42-dev-install] autostart already present, leaving init files alone"
-        fi
-    fi
     echo
-    read -r -p "[press Enter to return to the picker] " _
+    if ! eval "$HOME/Apps/bin/$C_CMD"; then
+        echo
+        echo "[42-dev-install] bootstrap failed — leaving shell init alone" >&2
+        read -r -p "[press Enter to return to the picker] " _
+        return 1
+    fi
+    if (( with_autostart )); then
+        add_autostart "$C_PATTERN" "$C_CMD" || true
+    fi
 }
 
 tui_mode() {
