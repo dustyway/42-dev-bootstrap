@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# 42-dev-validate — cheap static checks for this repo.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fail=0
+
+ok() { printf '[ok] %s\n' "$*"; }
+bad() { printf '[fail] %s\n' "$*" >&2; fail=1; }
+
+check_bash_syntax() {
+    if bash -n "$ROOT/install.sh" "$ROOT/lib/components.bash" "$ROOT"/bin/*; then
+        ok "bash syntax"
+    else
+        bad "bash syntax"
+    fi
+}
+
+check_install_sources_exist() {
+    local path missing=0
+    while IFS= read -r path; do
+        [[ -e "$ROOT/$path" ]] || { bad "install.sh references missing $path"; missing=1; }
+    done < <(sed -n 's/.*"\$REPO_ROOT\/\([^"]*\)".*/\1/p' "$ROOT/install.sh")
+    (( missing == 0 )) && ok "install.sh source paths exist"
+}
+
+check_registry() {
+    # shellcheck source=../lib/components.bash
+    source "$ROOT/lib/components.bash"
+
+    local row name cmd exe seen_names=" " missing=0
+    for row in "${COMPONENTS[@]}"; do
+        name=${row%%|*}
+        parse_component_row "$name" || { bad "registry row does not parse: $name"; missing=1; continue; }
+
+        if [[ "$seen_names" == *" $C_NAME "* ]]; then
+            bad "duplicate component name: $C_NAME"
+            missing=1
+        fi
+        seen_names+=" $C_NAME "
+
+        cmd=$C_CMD
+        exe=${cmd%% *}
+        [[ -x "$ROOT/bin/$exe" ]] || { bad "component $C_NAME references missing bin/$exe"; missing=1; }
+    done
+
+    parse_component_row jetbrains/pycharm-pro && [[ "$C_PATH" == "jetbrains/pycharm-pro" ]] \
+        || { bad "PyCharm Pro registry slug drift"; missing=1; }
+    parse_component_row jetbrains/pycharm-ce && [[ "$C_PATH" == "jetbrains/pycharm-ce" ]] \
+        || { bad "PyCharm Community registry slug drift"; missing=1; }
+    parse_component_row aider && [[ "$C_PATH" == "uv-tools/aider-chat" ]] \
+        || { bad "aider registry path drift"; missing=1; }
+    parse_component_row opencode && [[ "$C_CMD" == "opencode-bootstrap" ]] \
+        || { bad "opencode registry command drift"; missing=1; }
+
+    if grep -rEq --exclude-dir=.git --exclude='42-dev-validate' \
+        'pycharm-professional|pycharm-community|bin/(cleanup|setup)' "$ROOT"; then
+        bad "stale renamed component reference found"
+        missing=1
+    fi
+
+    (( missing == 0 )) && ok "component registry"
+}
+
+check_bash_syntax
+check_install_sources_exist
+check_registry
+
+exit "$fail"

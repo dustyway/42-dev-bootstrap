@@ -127,6 +127,13 @@ for a fully-local coding loop:
 `OLLAMA_API_BASE` is exported in `profile.snippet` so aider's LiteLLM
 backend routes to your daemon automatically.
 
+**`opencode-bootstrap`**
+Installs/enables OpenCode through mise via
+`mise use -g github:anomalyco/opencode`, with binaries under
+`/sgoinfre/mise-data/` instead of `$HOME`. This keeps OpenCode visible in
+`42-dev-install` while still letting `mise-bootstrap` restore it after a
+`/sgoinfre` wipe once it is in the global mise config.
+
 **`tailscale-bootstrap`**
 Installs the [Tailscale](https://tailscale.com) VPN client without root using
 userspace-networking mode — no kernel TUN device, no routing-table changes.
@@ -214,6 +221,7 @@ tool isn't in your config. Global npm packages live in
 | gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
 | graphviz binaries on /sgoinfre | ✅ | Re-extract from cached .debs, else re-download via `apt-get download` |
 | ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
+| OpenCode binary on /sgoinfre | ✅ | `opencode-bootstrap` opts into mise; `mise-bootstrap` restores it from config.toml |
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Tailscale binaries on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |

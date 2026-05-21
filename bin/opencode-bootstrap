@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# opencode-bootstrap — install/heal OpenCode through mise.
+#
+# Why mise: OpenCode officially supports `mise use -g github:anomalyco/opencode`.
+# Keeping it in the global mise config means mise-bootstrap can restore it after
+# a sgoinfre wipe, while this script is the explicit opt-in entry point for the
+# installer TUI.
+#
+# Usage:  opencode-bootstrap [VERSION]
+#   default: track latest via github:anomalyco/opencode
+#   pinned:  write github:anomalyco/opencode@VERSION to global mise config
+
+set -euo pipefail
+
+VERSION="${1:-}"
+TOOL="github:anomalyco/opencode"
+SPEC="$TOOL"
+[[ -n "$VERSION" ]] && SPEC="${TOOL}@${VERSION}"
+
+export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
+export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
+
+if ! command -v mise >/dev/null 2>&1; then
+    echo "[opencode-bootstrap] mise not on PATH — install mise first" >&2
+    exit 1
+fi
+
+echo "[opencode-bootstrap] enabling OpenCode in global mise config: $SPEC"
+mise use -g -y "$SPEC"
+
+eval "$(mise env -s bash)"
+
+if command -v opencode >/dev/null 2>&1; then
+    echo "[opencode-bootstrap] opencode ready: $(command -v opencode)"
+else
+    echo "[opencode-bootstrap] installed, but mise shims are not on PATH yet — open a new shell." >&2
+fi

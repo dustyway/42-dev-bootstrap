@@ -4,7 +4,7 @@
 # Two removal modes:
 #   uninstall     remove files AND comment out the matching `*-bootstrap`
 #                 line(s) in shell init, so next login does NOT bring it back
-#   cleanup-only  remove files only — components whose init line is intact
+#   cleanup mode  remove files only — components whose init line is intact
 #                 will be re-downloaded on next login
 #
 # Usage:
@@ -41,68 +41,46 @@ SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
 
 INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
 
-# JetBrains product-code → slug map (mirrors jb-bootstrap's PRODUCT table).
-# Used to derive each IDE's `restore_pattern` so we can tell, per IDE, whether
-# next login will reinstall it.
-declare -A JB_CODE=(
-    [idea-ultimate]=IIU
-    [idea-community]=IIC
-    [webstorm]=WS
-    [phpstorm]=PS
-    [pycharm-professional]=PCP
-    [pycharm-community]=PCC
-    [clion]=CL
-    [goland]=GO
-    [rubymine]=RM
-    [rider]=RD
-    [datagrip]=DG
-    [aqua]=AC
-    [rustrover]=RR
-)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
+[[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
+[[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-uninstall] components registry not found" >&2; exit 1; }
+source "$COMPONENTS_LIB"
 
 # name | path globs (colon-separated) | class | restore_pattern (ERE) | note
 # restore_pattern = "" means nothing in shell init restores it.
-COMPONENTS=()
+UNINSTALL_COMPONENTS=()
+
+cleanup_globs_for() {
+    case "$1" in
+        emacs)          printf '%s' "$SGO/emacs:$SGO/.cache/emacs-*.tar.gz:$SGO/.cache/emacs-*.tar.gz.sha256" ;;
+        clangd)         printf '%s' "$SGO/clangd:$SGO/.cache/clangd-linux-*.zip" ;;
+        wx)             printf '%s' "$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256" ;;
+        tailscale)      printf '%s' "$SGO/tailscale:$SGO/.cache/tailscale_*.tgz" ;;
+        gh)             printf '%s' "$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt" ;;
+        postgres)       printf '%s' "$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256" ;;
+        act)            printf '%s' "$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt" ;;
+        actionlint)     printf '%s' "$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt" ;;
+        graphviz)       printf '%s' "$SGO/graphviz:$SGO/.cache/graphviz-*" ;;
+        inotify-tools)  printf '%s' "$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256" ;;
+        aider)          printf '%s' "$SGO/uv-tools/aider-chat:$HOME/.local/share/uv/tools/aider-chat:$HOME/.local/bin/aider" ;;
+        opencode)       printf '%s' "$SGO/mise-data/installs/github-anomalyco-opencode:$SGO/mise-data/shims/opencode" ;;
+        jetbrains/*)    printf '%s:%s/.cache/jb-%s.tar.gz' "$SGO/$1" "$SGO" "${1#jetbrains/}" ;;
+        *)              printf '%s' "$SGO/$1" ;;
+    esac
+}
 
 build_components() {
-    COMPONENTS=(
-        "ollama|$SGO/ollama|safe|ollama-bootstrap|Models re-pulled by ollama-bootstrap from ~/Apps/etc/ollama-models.txt"
-        "cuda|$SGO/cuda:$SGO/.cache/cuda-debs|safe|cuda-bootstrap|Re-extracted by cuda-bootstrap from cached .debs"
-        "mise-data|$SGO/mise-data|safe|mise-bootstrap|Runtimes re-installed by mise-bootstrap from ~/.config/mise/config.toml"
-        "uv-tools|$SGO/uv-tools|safe|aider-bootstrap|aider venv re-installed by aider-bootstrap"
-        "emacs|$SGO/emacs:$SGO/.cache/emacs-*.tar.gz:$SGO/.cache/emacs-*.tar.gz.sha256|safe|emacs-bootstrap|Re-installed by emacs-bootstrap"
-        "clangd|$SGO/clangd:$SGO/.cache/clangd-linux-*.zip|safe|clangd-bootstrap|Re-installed by clangd-bootstrap"
-        "wx|$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256|safe|wx-bootstrap|mise-bootstrap|Re-installed via mise-bootstrap when erlang is in mise config"
-        "tailscale|$SGO/tailscale:$SGO/.cache/tailscale_*.tgz|safe|tailscale-bootstrap|Re-installed by tailscale-bootstrap"
-        "gh|$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt|safe|gh-bootstrap|Re-installed by gh-bootstrap"
-        "postgres|$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256|safe|postgres-bootstrap|Server binary re-installed by postgres-bootstrap (data NOT removed)"
-        "act|$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt|safe|act-bootstrap|Re-installed by act-bootstrap"
-        "actionlint|$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt|safe|actionlint-bootstrap|Re-installed by actionlint-bootstrap"
-        "graphviz|$SGO/graphviz:$SGO/.cache/graphviz-*|safe|graphviz-bootstrap|Re-installed by graphviz-bootstrap"
-        "inotify-tools|$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256|safe|inotify-tools-bootstrap|Re-installed by inotify-tools-bootstrap"
-    )
+    UNINSTALL_COMPONENTS=()
+    local row globs
+    for row in "${COMPONENTS[@]}"; do
+        parse_component_row "${row%%|*}" || continue
+        [[ "$C_CLASS" == "safe" ]] || continue
+        globs=$(cleanup_globs_for "$C_NAME")
+        UNINSTALL_COMPONENTS+=("${C_NAME}|${globs}|${C_CLASS}|${C_PATTERN}|${C_DESC}")
+    done
 
-    # Dynamic per-IDE jetbrains entries. One row per `$SGO/jetbrains/<slug>/`
-    # directory found — so idea-ultimate and webstorm appear as separate
-    # cleanable units instead of bundled under "jetbrains".
-    if [[ -d "$SGO/jetbrains" ]]; then
-        local d slug code pattern
-        for d in "$SGO/jetbrains"/*/; do
-            [[ -d "$d" ]] || continue
-            slug=$(basename "$d")
-            code="${JB_CODE[$slug]:-}"
-            # Match only the specific product code in shell init, not any
-            # other `jb-bootstrap X` line. ERE word-ish boundary via space/@/eol.
-            if [[ -n "$code" ]]; then
-                pattern="jb-bootstrap[[:space:]]+${code}([[:space:]@]|\$)"
-            else
-                pattern=""
-            fi
-            COMPONENTS+=("jetbrains/${slug}|$SGO/jetbrains/${slug}:$SGO/.cache/jb-${slug}.tar.gz|safe|${pattern}|Re-installed by jb-bootstrap ${code:-?}")
-        done
-    fi
-
-    COMPONENTS+=(
+    UNINSTALL_COMPONENTS+=(
         "jetbrains-config|$SGO/jetbrains-config|DATA||IDE settings/plugins/keymaps. Curated backup at ~/Apps/etc/jetbrains-backup restores most of it."
         "forum-pgdata|$SGO/forum-pgdata|DATA||PostgreSQL data directory. No bootstrap restores this."
         "forum-build|$SGO/forum-build|DATA||Build artifacts. No bootstrap restores this."
@@ -111,13 +89,11 @@ build_components() {
 }
 build_components
 
-# Parse a row by name — uses awk for the 5-field split because the wx
-# restore_pattern itself contains a `|` (alternation), so we can't just
-# `read -r ... <<<"$row"` which would over-split. Field 4 captures everything
-# from the 4th `|` up to the last one; field 5 is the trailing note.
+# Parse a row by name. The restore_pattern may contain `|` (alternation), so
+# split the fixed left fields first and then split note/pattern from the right.
 parse_row() {
     local needle="$1" row
-    for row in "${COMPONENTS[@]}"; do
+    for row in "${UNINSTALL_COMPONENTS[@]}"; do
         C_NAME=${row%%|*}
         [[ "$C_NAME" != "$needle" ]] && continue
         # Strip leading "name|"
@@ -292,11 +268,11 @@ login_status() {
 list_all() {
     local row name globs class pattern note paths size_str
     local total_safe=0 total_data=0 bytes
-    local total=${#COMPONENTS[@]} idx=0
+    local total=${#UNINSTALL_COMPONENTS[@]} idx=0
     # Build all the rows first (with progress), then print the table — keeps
     # the table itself unbroken by progress redraws.
     local out=()
-    for row in "${COMPONENTS[@]}"; do
+    for row in "${UNINSTALL_COMPONENTS[@]}"; do
         idx=$((idx + 1))
         parse_row "${row%%|*}"
         name=$C_NAME; globs=$C_GLOBS; class=$C_CLASS; pattern=$C_PATTERN; note=$C_NOTE
@@ -319,10 +295,10 @@ list_all() {
     local used; used=$(du -sb "$SGO" 2>/dev/null | awk '{print $1}')
     printf "sgoinfre usage:     %s of 30G quota\n" "$(format_bytes "$used")"
     echo
-    echo "  cleanup <name>              remove files (auto-reinstalls if Login=yes)"
-    echo "  cleanup <name> --uninstall  remove files AND comment out init line(s)"
-    echo "  cleanup <name> -y           skip confirm"
-    echo "  cleanup --all-safe          remove every 'safe' component"
+    echo "  42-dev-uninstall <name>              remove files (auto-reinstalls if Login=yes)"
+    echo "  42-dev-uninstall <name> --uninstall  remove files AND comment out init line(s)"
+    echo "  42-dev-uninstall <name> -y           skip confirm"
+    echo "  42-dev-uninstall --all-safe          remove every 'safe' component"
 }
 
 # Args: name, assume_yes (0|1), uninstall (0|1)
@@ -330,7 +306,7 @@ remove_one() {
     local name="$1" yes="$2" uninstall="$3"
     if ! parse_row "$name"; then
         echo "[42-dev-uninstall] unknown component: $name" >&2
-        echo "          run 'cleanup' for the list" >&2
+        echo "          run '42-dev-uninstall' for the list" >&2
         return 1
     fi
     mapfile -t paths < <(expand_globs "$C_GLOBS")
@@ -340,6 +316,7 @@ remove_one() {
         if (( uninstall )) && [[ -n "$C_PATTERN" ]]; then
             mapfile -t init_recs < <(find_init_lines "$C_PATTERN")
             (( ${#init_recs[@]} > 0 )) && comment_out_init_lines "${init_recs[@]}"
+            post_uninstall_component "$name"
         fi
         return 0
     fi
@@ -395,12 +372,13 @@ remove_one() {
     if (( uninstall )) && (( ${#init_recs[@]} > 0 )); then
         comment_out_init_lines "${init_recs[@]}"
     fi
+    (( uninstall )) && post_uninstall_component "$name"
 }
 
 remove_all_safe() {
     local yes="$1" uninstall="$2"
     local doomed=()
-    for row in "${COMPONENTS[@]}"; do
+    for row in "${UNINSTALL_COMPONENTS[@]}"; do
         parse_row "${row%%|*}"
         [[ "$C_CLASS" == "safe" ]] || continue
         mapfile -t paths < <(expand_globs "$C_GLOBS")
@@ -424,6 +402,22 @@ remove_all_safe() {
     for name in "${doomed[@]}"; do
         remove_one "$name" 1 "$uninstall"
     done
+}
+
+post_uninstall_component() {
+    local name="$1"
+    case "$name" in
+        opencode)
+            if command -v mise >/dev/null 2>&1; then
+                MISE_DATA_DIR="$SGO/mise-data" MISE_CACHE_DIR="/goinfre/${USER}/mise-cache" \
+                    mise use -g --remove github:anomalyco/opencode >/dev/null 2>&1 \
+                    && echo "[42-dev-uninstall] removed OpenCode from global mise config" \
+                    || echo "[42-dev-uninstall] warning: failed to remove OpenCode from global mise config" >&2
+            else
+                echo "[42-dev-uninstall] warning: mise not on PATH; OpenCode may remain in ~/.config/mise/config.toml" >&2
+            fi
+            ;;
+    esac
 }
 
 # Dry-run "what would be removed" for one component. Used by fzf --preview.
@@ -463,8 +457,8 @@ preview_one() {
 tui_rows() {
     local show_progress="${1:-0}"
     local row paths bytes size_str login
-    local total=${#COMPONENTS[@]} idx=0
-    for row in "${COMPONENTS[@]}"; do
+    local total=${#UNINSTALL_COMPONENTS[@]} idx=0
+    for row in "${UNINSTALL_COMPONENTS[@]}"; do
         idx=$((idx + 1))
         parse_row "${row%%|*}"
         (( show_progress )) && progress "$idx" "$total" "sizing $C_NAME"
@@ -478,7 +472,7 @@ tui_rows() {
     (( show_progress )) && progress_done
 }
 
-# Per-item interactive action — invoked from fzf via `cleanup --apply <name>`.
+# Per-item interactive action — invoked from fzf via `42-dev-uninstall --apply <name>`.
 # Shows the dry-run preview, asks cleanup/uninstall/skip, runs the chosen
 # action, pauses so the user sees the output, then returns control to fzf.
 apply_interactive() {
@@ -522,8 +516,8 @@ EOF
 }
 
 # fzf single-select picker. Pressing Enter on a row hands off to
-# `cleanup --apply <name>`, which asks cleanup/uninstall/skip and acts.
-# fzf then reloads the row list (via `cleanup --tui-rows`) so removed
+# `42-dev-uninstall --apply <name>`, which asks cleanup/uninstall/skip and acts.
+# fzf then reloads the row list (via `42-dev-uninstall --tui-rows`) so removed
 # items disappear. Esc quits.
 tui_mode() {
     if ! command -v fzf >/dev/null 2>&1; then

@@ -7,7 +7,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-mkdir -p "$HOME/Apps/bin" "$HOME/Apps/etc"
+mkdir -p "$HOME/Apps/bin" "$HOME/Apps/etc" "$HOME/Apps/lib"
 
 install -m 0755 "$REPO_ROOT/bin/jb-bootstrap"              "$HOME/Apps/bin/jb-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/mise-bootstrap"            "$HOME/Apps/bin/mise-bootstrap"
@@ -20,6 +20,7 @@ install -m 0755 "$REPO_ROOT/bin/gh-bootstrap"              "$HOME/Apps/bin/gh-bo
 install -m 0755 "$REPO_ROOT/bin/graphviz-bootstrap"        "$HOME/Apps/bin/graphviz-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/ollama-bootstrap"          "$HOME/Apps/bin/ollama-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/aider-bootstrap"           "$HOME/Apps/bin/aider-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/opencode-bootstrap"        "$HOME/Apps/bin/opencode-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/cuda-bootstrap"            "$HOME/Apps/bin/cuda-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/tailscale-bootstrap"       "$HOME/Apps/bin/tailscale-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/actionlint-bootstrap"      "$HOME/Apps/bin/actionlint-bootstrap"
@@ -27,8 +28,10 @@ install -m 0755 "$REPO_ROOT/bin/act-bootstrap"             "$HOME/Apps/bin/act-b
 install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/jb-patch-elixir-debugger"  "$HOME/Apps/bin/jb-patch-elixir-debugger"
 install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
-install -m 0755 "$REPO_ROOT/bin/cleanup"                   "$HOME/Apps/bin/cleanup"
-install -m 0755 "$REPO_ROOT/bin/setup"                     "$HOME/Apps/bin/setup"
+install -m 0755 "$REPO_ROOT/bin/42-dev-install"            "$HOME/Apps/bin/42-dev-install"
+install -m 0755 "$REPO_ROOT/bin/42-dev-uninstall"          "$HOME/Apps/bin/42-dev-uninstall"
+install -m 0755 "$REPO_ROOT/bin/42-dev-validate"           "$HOME/Apps/bin/42-dev-validate"
+install -m 0644 "$REPO_ROOT/lib/components.bash"           "$HOME/Apps/lib/components.bash"
 
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
     cp "$REPO_ROOT/etc/npm-globals.txt.example" "$HOME/Apps/etc/npm-globals.txt"
@@ -55,6 +58,7 @@ Then add a login-time hook to ~/.zprofile, e.g.:
   nohup \$HOME/Apps/bin/graphviz-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/ollama-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/aider-bootstrap &>/dev/null & disown
+  nohup \$HOME/Apps/bin/opencode-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/cuda-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/actionlint-bootstrap &>/dev/null & disown

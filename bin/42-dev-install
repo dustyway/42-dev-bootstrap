@@ -26,57 +26,13 @@ SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
 
 INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
 
-# Row format: name | bootstrap_cmd | sgo_subpath | restore_pattern | description
-# - bootstrap_cmd   : exact argv to exec (e.g. "emacs-bootstrap", "jb-bootstrap IIU")
-# - sgo_subpath     : "installed?" check — passed to expand path under $SGO
-# - restore_pattern : ERE for `*-bootstrap` invocation in shell init
-# - description     : one-line human description (shown in TUI Notes column)
-COMPONENTS=(
-    "emacs|emacs-bootstrap|emacs|emacs-bootstrap|Modern Emacs (tree-sitter + native-comp, GTK3/X11) ~100 MB"
-    "clangd|clangd-bootstrap|clangd|clangd-bootstrap|clangd LSP server for C/C++ ~250 MB"
-    "postgres|postgres-bootstrap|postgres|postgres-bootstrap|PostgreSQL server binary (theseus-rs prebuilt) ~40 MB"
-    "gh|gh-bootstrap|gh|gh-bootstrap|GitHub CLI (cli/cli prebuilt) ~40 MB"
-    "act|act-bootstrap|act|act-bootstrap|Run GitHub Actions locally (nektos/act) ~20 MB"
-    "actionlint|actionlint-bootstrap|actionlint|actionlint-bootstrap|GitHub Actions workflow linter ~5 MB"
-    "graphviz|graphviz-bootstrap|graphviz|graphviz-bootstrap|graphviz dot/neato/fdp via apt-get download ~5 MB"
-    "inotify-tools|inotify-tools-bootstrap|inotify-tools|inotify-tools-bootstrap|inotifywait/inotifywatch (Phoenix dev live-reload) <1 MB"
-    "tailscale|tailscale-bootstrap|tailscale|tailscale-bootstrap|Tailscale VPN client (userspace SOCKS5) ~60 MB"
-    "fzf|fzf-bootstrap|fzf|fzf-bootstrap|fzf fuzzy finder (junegunn/fzf) ~2 MB"
-    "wx|wx-bootstrap|wx|wx-bootstrap|mise-bootstrap|wxWidgets 3.2 for Erlang's :observer ~80 MB"
-    "mise-data|mise-bootstrap|mise-data|mise-bootstrap|mise runtimes (reads ~/.config/mise/config.toml) varies"
-    "uv-tools|aider-bootstrap|uv-tools|aider-bootstrap|aider terminal pair-programmer via uv tool ~500 MB"
-    "cuda|cuda-bootstrap|cuda|cuda-bootstrap|CUDA libraries (extracts .debs without sudo) ~3.5 GB"
-    "ollama|ollama-bootstrap|ollama|ollama-bootstrap|Ollama daemon + model pulls from ~/Apps/etc/ollama-models.txt"
-    "jetbrains/idea-ultimate|jb-bootstrap IIU|jetbrains/idea-ultimate|jb-bootstrap[[:space:]]+IIU([[:space:]@]|\$)|IntelliJ IDEA Ultimate ~4 GB"
-    "jetbrains/idea-community|jb-bootstrap IIC|jetbrains/idea-community|jb-bootstrap[[:space:]]+IIC([[:space:]@]|\$)|IntelliJ IDEA Community ~1 GB"
-    "jetbrains/webstorm|jb-bootstrap WS|jetbrains/webstorm|jb-bootstrap[[:space:]]+WS([[:space:]@]|\$)|WebStorm ~3 GB"
-    "jetbrains/phpstorm|jb-bootstrap PS|jetbrains/phpstorm|jb-bootstrap[[:space:]]+PS([[:space:]@]|\$)|PhpStorm ~3 GB"
-    "jetbrains/pycharm-professional|jb-bootstrap PCP|jetbrains/pycharm-professional|jb-bootstrap[[:space:]]+PCP([[:space:]@]|\$)|PyCharm Professional ~3 GB"
-    "jetbrains/pycharm-community|jb-bootstrap PCC|jetbrains/pycharm-community|jb-bootstrap[[:space:]]+PCC([[:space:]@]|\$)|PyCharm Community ~1 GB"
-    "jetbrains/clion|jb-bootstrap CL|jetbrains/clion|jb-bootstrap[[:space:]]+CL([[:space:]@]|\$)|CLion ~2.5 GB"
-    "jetbrains/goland|jb-bootstrap GO|jetbrains/goland|jb-bootstrap[[:space:]]+GO([[:space:]@]|\$)|GoLand ~2.5 GB"
-    "jetbrains/rubymine|jb-bootstrap RM|jetbrains/rubymine|jb-bootstrap[[:space:]]+RM([[:space:]@]|\$)|RubyMine ~3 GB"
-    "jetbrains/rider|jb-bootstrap RD|jetbrains/rider|jb-bootstrap[[:space:]]+RD([[:space:]@]|\$)|Rider ~3 GB"
-    "jetbrains/datagrip|jb-bootstrap DG|jetbrains/datagrip|jb-bootstrap[[:space:]]+DG([[:space:]@]|\$)|DataGrip ~2 GB"
-    "jetbrains/aqua|jb-bootstrap AC|jetbrains/aqua|jb-bootstrap[[:space:]]+AC([[:space:]@]|\$)|Aqua ~3 GB"
-    "jetbrains/rustrover|jb-bootstrap RR|jetbrains/rustrover|jb-bootstrap[[:space:]]+RR([[:space:]@]|\$)|RustRover ~3 GB"
-)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
+[[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
+[[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-install] components registry not found" >&2; exit 1; }
+source "$COMPONENTS_LIB"
 
-# Strict 5-field row parser (wx's restore_pattern itself contains `|`).
-parse_row() {
-    local needle="$1" row
-    for row in "${COMPONENTS[@]}"; do
-        C_NAME=${row%%|*}
-        [[ "$C_NAME" != "$needle" ]] && continue
-        local rest=${row#*|}
-        C_CMD=${rest%%|*};  rest=${rest#*|}
-        C_PATH=${rest%%|*}; rest=${rest#*|}
-        C_DESC=${rest##*|}
-        C_PATTERN=${rest%|*}
-        return 0
-    done
-    return 1
-}
+parse_row() { parse_component_row "$@"; }
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -201,7 +157,7 @@ preview_one() {
     fi
 }
 
-# Per-item interactive action — invoked by fzf via `setup --install-of <name>`.
+# Per-item interactive action — invoked by fzf via `42-dev-install --install-of <name>`.
 install_interactive() {
     local name="$1"
     if ! parse_row "$name"; then
