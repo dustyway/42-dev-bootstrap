@@ -11,6 +11,7 @@ mkdir -p "$HOME/Apps/bin" "$HOME/Apps/etc"
 
 install -m 0755 "$REPO_ROOT/bin/jb-bootstrap"              "$HOME/Apps/bin/jb-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/mise-bootstrap"            "$HOME/Apps/bin/mise-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/wx-bootstrap"              "$HOME/Apps/bin/wx-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/emacs-bootstrap"           "$HOME/Apps/bin/emacs-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/postgres-bootstrap"        "$HOME/Apps/bin/postgres-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/inotify-tools-bootstrap"   "$HOME/Apps/bin/inotify-tools-bootstrap"
