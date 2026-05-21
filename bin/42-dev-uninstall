@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cleanup — list & uninstall components installed by 42-dev-bootstrap.
+# 42-dev-uninstall — list & uninstall components installed by 42-dev-bootstrap.
 #
 # Two removal modes:
 #   uninstall     remove files AND comment out the matching `*-bootstrap`
@@ -8,16 +8,18 @@
 #                 will be re-downloaded on next login
 #
 # Usage:
-#   cleanup                            fzf TUI (default). In the picker:
-#                                        TAB / Shift-TAB   toggle selection
-#                                        Enter             commit as uninstall
-#                                        Ctrl-X            commit as cleanup
-#                                        Esc               abort
-#   cleanup --list                     text table instead of TUI (no removal)
-#   cleanup <name> [-y]                non-interactive: files only
-#   cleanup <name> --uninstall [-y]    non-interactive: files + init lines
-#   cleanup --all-safe [-y]            bulk: every "safe" component, files only
-#   cleanup --all-safe --uninstall     bulk uninstall
+#   42-dev-uninstall                            fzf TUI (default). In the picker:
+#                                                 ↑/↓           move
+#                                                 type          filter
+#                                                 Enter         ask cleanup/uninstall/abort
+#                                                               for the highlighted row,
+#                                                               then act and refresh
+#                                                 Esc           quit
+#   42-dev-uninstall --list                     text table instead of TUI (no removal)
+#   42-dev-uninstall <name> [-y]                non-interactive: files only
+#   42-dev-uninstall <name> --uninstall [-y]    non-interactive: files + init lines
+#   42-dev-uninstall --all-safe [-y]            bulk: every "safe" component, files only
+#   42-dev-uninstall --all-safe --uninstall     bulk uninstall
 #
 # Requires fzf for the TUI — run `fzf-bootstrap` once if it's missing.
 #
@@ -35,33 +37,79 @@
 set -euo pipefail
 
 SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[cleanup] sgoinfre path not found for $USER" >&2; exit 1; }
+[[ -z "$SGO" ]] && { echo "[42-dev-uninstall] sgoinfre path not found for $USER" >&2; exit 1; }
 
 INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
 
+# JetBrains product-code → slug map (mirrors jb-bootstrap's PRODUCT table).
+# Used to derive each IDE's `restore_pattern` so we can tell, per IDE, whether
+# next login will reinstall it.
+declare -A JB_CODE=(
+    [idea-ultimate]=IIU
+    [idea-community]=IIC
+    [webstorm]=WS
+    [phpstorm]=PS
+    [pycharm-professional]=PCP
+    [pycharm-community]=PCC
+    [clion]=CL
+    [goland]=GO
+    [rubymine]=RM
+    [rider]=RD
+    [datagrip]=DG
+    [aqua]=AC
+    [rustrover]=RR
+)
+
 # name | path globs (colon-separated) | class | restore_pattern (ERE) | note
 # restore_pattern = "" means nothing in shell init restores it.
-COMPONENTS=(
-    "ollama|$SGO/ollama|safe|ollama-bootstrap|Models re-pulled by ollama-bootstrap from ~/Apps/etc/ollama-models.txt"
-    "jetbrains|$SGO/jetbrains:$SGO/.cache/jb-*.tar.gz|safe|jb-bootstrap|IDEs re-installed by jb-bootstrap"
-    "cuda|$SGO/cuda:$SGO/.cache/cuda-debs|safe|cuda-bootstrap|Re-extracted by cuda-bootstrap from cached .debs"
-    "mise-data|$SGO/mise-data|safe|mise-bootstrap|Runtimes re-installed by mise-bootstrap from ~/.config/mise/config.toml"
-    "uv-tools|$SGO/uv-tools|safe|aider-bootstrap|aider venv re-installed by aider-bootstrap"
-    "emacs|$SGO/emacs:$SGO/.cache/emacs-*.tar.gz:$SGO/.cache/emacs-*.tar.gz.sha256|safe|emacs-bootstrap|Re-installed by emacs-bootstrap"
-    "clangd|$SGO/clangd:$SGO/.cache/clangd-linux-*.zip|safe|clangd-bootstrap|Re-installed by clangd-bootstrap"
-    "wx|$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256|safe|wx-bootstrap|mise-bootstrap|Re-installed via mise-bootstrap when erlang is in mise config"
-    "tailscale|$SGO/tailscale:$SGO/.cache/tailscale_*.tgz|safe|tailscale-bootstrap|Re-installed by tailscale-bootstrap"
-    "gh|$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt|safe|gh-bootstrap|Re-installed by gh-bootstrap"
-    "postgres|$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256|safe|postgres-bootstrap|Server binary re-installed by postgres-bootstrap (data NOT removed)"
-    "act|$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt|safe|act-bootstrap|Re-installed by act-bootstrap"
-    "actionlint|$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt|safe|actionlint-bootstrap|Re-installed by actionlint-bootstrap"
-    "graphviz|$SGO/graphviz:$SGO/.cache/graphviz-*|safe|graphviz-bootstrap|Re-installed by graphviz-bootstrap"
-    "inotify-tools|$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256|safe|inotify-tools-bootstrap|Re-installed by inotify-tools-bootstrap"
-    "jetbrains-config|$SGO/jetbrains-config|DATA||IDE settings/plugins/keymaps. Curated backup at ~/Apps/etc/jetbrains-backup restores most of it."
-    "forum-pgdata|$SGO/forum-pgdata|DATA||PostgreSQL data directory. No bootstrap restores this."
-    "forum-build|$SGO/forum-build|DATA||Build artifacts. No bootstrap restores this."
-    "CLion_cache|$SGO/CLion_cache|DATA||CLion cache. Re-indexed on next launch (slow but automatic)."
-)
+COMPONENTS=()
+
+build_components() {
+    COMPONENTS=(
+        "ollama|$SGO/ollama|safe|ollama-bootstrap|Models re-pulled by ollama-bootstrap from ~/Apps/etc/ollama-models.txt"
+        "cuda|$SGO/cuda:$SGO/.cache/cuda-debs|safe|cuda-bootstrap|Re-extracted by cuda-bootstrap from cached .debs"
+        "mise-data|$SGO/mise-data|safe|mise-bootstrap|Runtimes re-installed by mise-bootstrap from ~/.config/mise/config.toml"
+        "uv-tools|$SGO/uv-tools|safe|aider-bootstrap|aider venv re-installed by aider-bootstrap"
+        "emacs|$SGO/emacs:$SGO/.cache/emacs-*.tar.gz:$SGO/.cache/emacs-*.tar.gz.sha256|safe|emacs-bootstrap|Re-installed by emacs-bootstrap"
+        "clangd|$SGO/clangd:$SGO/.cache/clangd-linux-*.zip|safe|clangd-bootstrap|Re-installed by clangd-bootstrap"
+        "wx|$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256|safe|wx-bootstrap|mise-bootstrap|Re-installed via mise-bootstrap when erlang is in mise config"
+        "tailscale|$SGO/tailscale:$SGO/.cache/tailscale_*.tgz|safe|tailscale-bootstrap|Re-installed by tailscale-bootstrap"
+        "gh|$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt|safe|gh-bootstrap|Re-installed by gh-bootstrap"
+        "postgres|$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256|safe|postgres-bootstrap|Server binary re-installed by postgres-bootstrap (data NOT removed)"
+        "act|$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt|safe|act-bootstrap|Re-installed by act-bootstrap"
+        "actionlint|$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt|safe|actionlint-bootstrap|Re-installed by actionlint-bootstrap"
+        "graphviz|$SGO/graphviz:$SGO/.cache/graphviz-*|safe|graphviz-bootstrap|Re-installed by graphviz-bootstrap"
+        "inotify-tools|$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256|safe|inotify-tools-bootstrap|Re-installed by inotify-tools-bootstrap"
+    )
+
+    # Dynamic per-IDE jetbrains entries. One row per `$SGO/jetbrains/<slug>/`
+    # directory found — so idea-ultimate and webstorm appear as separate
+    # cleanable units instead of bundled under "jetbrains".
+    if [[ -d "$SGO/jetbrains" ]]; then
+        local d slug code pattern
+        for d in "$SGO/jetbrains"/*/; do
+            [[ -d "$d" ]] || continue
+            slug=$(basename "$d")
+            code="${JB_CODE[$slug]:-}"
+            # Match only the specific product code in shell init, not any
+            # other `jb-bootstrap X` line. ERE word-ish boundary via space/@/eol.
+            if [[ -n "$code" ]]; then
+                pattern="jb-bootstrap[[:space:]]+${code}([[:space:]@]|\$)"
+            else
+                pattern=""
+            fi
+            COMPONENTS+=("jetbrains/${slug}|$SGO/jetbrains/${slug}:$SGO/.cache/jb-${slug}.tar.gz|safe|${pattern}|Re-installed by jb-bootstrap ${code:-?}")
+        done
+    fi
+
+    COMPONENTS+=(
+        "jetbrains-config|$SGO/jetbrains-config|DATA||IDE settings/plugins/keymaps. Curated backup at ~/Apps/etc/jetbrains-backup restores most of it."
+        "forum-pgdata|$SGO/forum-pgdata|DATA||PostgreSQL data directory. No bootstrap restores this."
+        "forum-build|$SGO/forum-build|DATA||Build artifacts. No bootstrap restores this."
+        "CLion_cache|$SGO/CLion_cache|DATA||CLion cache. Re-indexed on next launch (slow but automatic)."
+    )
+}
+build_components
 
 # Parse a row by name — uses awk for the 5-field split because the wx
 # restore_pattern itself contains a `|` (alternation), so we can't just
@@ -207,7 +255,7 @@ comment_out_init_lines() {
     [[ ${#records[@]} -eq 0 ]] && return 0
 
     local today; today=$(date +%Y-%m-%d)
-    local prefix="# [cleanup ${today}] "
+    local prefix="# [42-dev-uninstall ${today}] "
 
     # Group by file → list of line numbers, descending so each edit doesn't
     # shift subsequent line numbers within the same file.
@@ -226,7 +274,7 @@ comment_out_init_lines() {
             # Prepend prefix to that specific line.
             sed -i "${line}s|^|${prefix}|" "$file"
         done
-        echo "[cleanup] commented out $(echo "${by_file[$file]}" | wc -w) line(s) in $file"
+        echo "[42-dev-uninstall] commented out $(echo "${by_file[$file]}" | wc -w) line(s) in $file"
     done
 }
 
@@ -257,13 +305,13 @@ list_all() {
         (( ${#paths[@]} == 0 )) && continue
         bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
         size_str=$(format_bytes "$bytes")
-        out+=("$(printf "%-18s %8s  %-5s  %-7s  %s" "$name" "$size_str" "$class" "$(login_status "$pattern")" "$note")")
+        out+=("$(printf "%-24s %8s  %-5s  %-7s  %s" "$name" "$size_str" "$class" "$(login_status "$pattern")" "$note")")
         if [[ "$class" == "safe" ]]; then total_safe=$((total_safe + bytes))
         else total_data=$((total_data + bytes)); fi
     done
     progress_done
-    printf "%-18s %8s  %-5s  %-7s  %s\n" "Component" "Size" "Class" "Login" "Notes"
-    printf "%-18s %8s  %-5s  %-7s  %s\n" "---------" "----" "-----" "-----" "-----"
+    printf "%-24s %8s  %-5s  %-7s  %s\n" "Component" "Size" "Class" "Login" "Notes"
+    printf "%-24s %8s  %-5s  %-7s  %s\n" "---------" "----" "-----" "-----" "-----"
     printf '%s\n' "${out[@]}"
     echo
     printf "Reclaimable (safe): %s\n" "$(format_bytes "$total_safe")"
@@ -281,13 +329,13 @@ list_all() {
 remove_one() {
     local name="$1" yes="$2" uninstall="$3"
     if ! parse_row "$name"; then
-        echo "[cleanup] unknown component: $name" >&2
+        echo "[42-dev-uninstall] unknown component: $name" >&2
         echo "          run 'cleanup' for the list" >&2
         return 1
     fi
     mapfile -t paths < <(expand_globs "$C_GLOBS")
     if (( ${#paths[@]} == 0 )); then
-        echo "[cleanup] nothing to remove for '$name' (already gone)"
+        echo "[42-dev-uninstall] nothing to remove for '$name' (already gone)"
         # Still offer init-line cleanup if asked.
         if (( uninstall )) && [[ -n "$C_PATTERN" ]]; then
             mapfile -t init_recs < <(find_init_lines "$C_PATTERN")
@@ -337,12 +385,12 @@ remove_one() {
     if (( ! yes )); then
         echo
         read -r -p "Proceed? [y/N] " ans
-        [[ "$ans" =~ ^[Yy]$ ]] || { echo "[cleanup] aborted"; return 1; }
+        [[ "$ans" =~ ^[Yy]$ ]] || { echo "[42-dev-uninstall] aborted"; return 1; }
     fi
 
     for p in "${paths[@]}"; do rm -rf -- "$p"; done
     for s in "${shims[@]}"; do rm -f  -- "$s"; done
-    echo "[cleanup] removed $name ($(format_bytes "$bytes") freed)"
+    echo "[42-dev-uninstall] removed $name ($(format_bytes "$bytes") freed)"
 
     if (( uninstall )) && (( ${#init_recs[@]} > 0 )); then
         comment_out_init_lines "${init_recs[@]}"
@@ -359,7 +407,7 @@ remove_all_safe() {
         (( ${#paths[@]} > 0 )) && doomed+=("$C_NAME")
     done
     if (( ${#doomed[@]} == 0 )); then
-        echo "[cleanup] nothing to remove"
+        echo "[42-dev-uninstall] nothing to remove"
         return 0
     fi
     echo "Will remove every 'safe' component:"
@@ -371,7 +419,7 @@ remove_all_safe() {
     if (( ! yes )); then
         echo
         read -r -p "Proceed? [y/N] " ans
-        [[ "$ans" =~ ^[Yy]$ ]] || { echo "[cleanup] aborted"; return 1; }
+        [[ "$ans" =~ ^[Yy]$ ]] || { echo "[42-dev-uninstall] aborted"; return 1; }
     fi
     for name in "${doomed[@]}"; do
         remove_one "$name" 1 "$uninstall"
@@ -409,74 +457,97 @@ preview_one() {
     echo; echo "Total reclaim: $(format_bytes "$bytes")"
 }
 
-# fzf-driven multi-select picker. Mode is committed inside fzf via the exit
-# key — Enter commits as uninstall, Ctrl-X commits as cleanup-only, Esc aborts.
-# No post-fzf prompt; everything happens in the one TUI.
-tui_mode() {
-    if ! command -v fzf >/dev/null 2>&1; then
-        echo "[cleanup] fzf not found on PATH" >&2
-        echo "          install it with: fzf-bootstrap" >&2
-        exit 1
-    fi
-    local self; self="$(realpath "$0")"
-
-    local rows=() row bytes size_str login paths
+# Emit one row per existing component, formatted as space-padded columns.
+# Arg: 1 = show progress on stderr, 0 = silent (used by fzf's reload binding,
+# which re-fetches after every action and shouldn't redraw the bar).
+tui_rows() {
+    local show_progress="${1:-0}"
+    local row paths bytes size_str login
     local total=${#COMPONENTS[@]} idx=0
     for row in "${COMPONENTS[@]}"; do
         idx=$((idx + 1))
         parse_row "${row%%|*}"
-        progress "$idx" "$total" "sizing $C_NAME"
+        (( show_progress )) && progress "$idx" "$total" "sizing $C_NAME"
         mapfile -t paths < <(expand_globs "$C_GLOBS")
         (( ${#paths[@]} == 0 )) && continue
         bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
         size_str=$(format_bytes "$bytes")
         login=$(login_status "$C_PATTERN")
-        rows+=("$(printf '%-18s %7s  %-4s  %-8s  %s' "$C_NAME" "$size_str" "$C_CLASS" "$login" "$C_NOTE")")
+        printf '%-24s %7s  %-4s  %-8s  %s\n' "$C_NAME" "$size_str" "$C_CLASS" "$login" "$C_NOTE"
     done
-    progress_done
+    (( show_progress )) && progress_done
+}
 
-    local header="TAB / Shift-TAB toggle  •  Esc abort
-Enter   = Uninstall   (default — remove files AND comment out matching init lines)
-Ctrl-X  = Cleanup     (remove files only; reinstalls on next login if init line stays)"
+# Per-item interactive action — invoked from fzf via `cleanup --apply <name>`.
+# Shows the dry-run preview, asks cleanup/uninstall/skip, runs the chosen
+# action, pauses so the user sees the output, then returns control to fzf.
+apply_interactive() {
+    local name="$1"
+    if ! parse_row "$name"; then
+        echo "[42-dev-uninstall] unknown component: $name" >&2
+        sleep 1; return 1
+    fi
+    clear
+    preview_one "$name"
+    echo
+    cat <<EOF
+What should happen to '${C_NAME}'?
+  [c] Cleanup    — remove files only (will reinstall on next login if Login=yes)
+  [u] Uninstall  — remove files AND comment out matching init line(s)
+  [a] Abort      — do nothing, return to the picker
 
-    # --expect=ctrl-x makes fzf print the pressed key on the first line of
-    # output if it was Ctrl-X; for Enter the first line is empty.
-    local fzf_out
-    fzf_out=$(printf '%s\n' "${rows[@]}" | \
-        fzf --multi \
-            --header="$header" \
+EOF
+    local ans
+    read -r -p "Action? [c/u/a] " ans
+    case "${ans:-a}" in
+        c|C|u|U)
+            local mode="cleanup" uninstall_flag=0
+            if [[ "$ans" =~ ^[uU]$ ]]; then mode="uninstall"; uninstall_flag=1; fi
+            echo
+            local confirm
+            read -r -p "Confirm: ${mode} '${C_NAME}' — really do this? [y/N] " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                echo
+                remove_one "$name" 1 "$uninstall_flag"
+            else
+                echo "[42-dev-uninstall] aborted (no changes made)"
+            fi
+            echo
+            read -r -p "[press Enter to return to the picker] " _
+            ;;
+        *)
+            echo "[42-dev-uninstall] aborted"
+            ;;
+    esac
+}
+
+# fzf single-select picker. Pressing Enter on a row hands off to
+# `cleanup --apply <name>`, which asks cleanup/uninstall/skip and acts.
+# fzf then reloads the row list (via `cleanup --tui-rows`) so removed
+# items disappear. Esc quits.
+tui_mode() {
+    if ! command -v fzf >/dev/null 2>&1; then
+        echo "[42-dev-uninstall] fzf not found on PATH" >&2
+        echo "          install it with: fzf-bootstrap" >&2
+        exit 1
+    fi
+    local self; self="$(realpath "$0")"
+
+    # Pre-build the initial list with progress visible. fzf reads it from
+    # stdin; later reloads re-call `--tui-rows` themselves (without progress).
+    local initial; initial=$(tui_rows 1)
+    [[ -z "$initial" ]] && { echo "[42-dev-uninstall] nothing to clean up"; return 0; }
+
+    local header="Enter  = act on highlighted row (asks: Cleanup / Uninstall / Skip)
+Esc    = quit  •  ↑/↓ move  •  type to filter"
+
+    printf '%s\n' "$initial" | \
+        fzf --header="$header" \
             --preview "$self --preview-of {1}" \
             --preview-window=right:55%:wrap \
-            --bind 'tab:toggle+down,shift-tab:toggle+up' \
-            --expect=ctrl-x \
+            --bind "enter:execute($self --apply {1})+reload($self --tui-rows)" \
             --layout=reverse \
-            --height=100%) || true
-
-    [[ -z "$fzf_out" ]] && { echo "[cleanup] aborted"; return 1; }
-
-    local key selections
-    key=$(printf '%s' "$fzf_out" | head -n1)
-    selections=$(printf '%s' "$fzf_out" | tail -n +2)
-    [[ -z "$selections" ]] && { echo "[cleanup] no components selected"; return 1; }
-
-    local mode uninstall
-    if [[ "$key" == "ctrl-x" ]]; then mode="cleanup-only"; uninstall=0
-    else                              mode="uninstall";    uninstall=1
-    fi
-
-    local names=() line
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        names+=("${line%% *}")
-    done <<<"$selections"
-
-    echo "Mode: ${mode}"
-    echo "Selected: ${names[*]}"
-    local n
-    for n in "${names[@]}"; do
-        echo
-        remove_one "$n" 1 "$uninstall"
-    done
+            --height=100% || true
 }
 
 # ─── arg parsing ─────────────────────────────────────────────────────────────
@@ -485,25 +556,37 @@ yes=0
 uninstall=0
 target=""
 preview_name=""
-expecting_preview=0
+apply_name=""
+expecting_value=""
 for arg in "$@"; do
-    if (( expecting_preview )); then
-        preview_name="$arg"; expecting_preview=0; continue
+    if [[ -n "$expecting_value" ]]; then
+        case "$expecting_value" in
+            preview-of) preview_name="$arg" ;;
+            apply)      apply_name="$arg" ;;
+        esac
+        expecting_value=""
+        continue
     fi
     case "$arg" in
         -y|--yes)        yes=1 ;;
         --uninstall)     uninstall=1 ;;
         --list)          target="--list" ;;
-        --preview-of)    expecting_preview=1 ;;
+        --tui-rows)      target="--tui-rows" ;;
+        --preview-of)    expecting_value="preview-of" ;;
+        --apply)         expecting_value="apply" ;;
         -h|--help)       sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         --all-safe)      target="--all-safe" ;;
-        --*)             echo "[cleanup] unknown flag: $arg" >&2; exit 2 ;;
+        --*)             echo "[42-dev-uninstall] unknown flag: $arg" >&2; exit 2 ;;
         *)               target="$arg" ;;
     esac
 done
 
 if [[ -n "$preview_name" ]]; then
     preview_one "$preview_name"
+elif [[ -n "$apply_name" ]]; then
+    apply_interactive "$apply_name"
+elif [[ "$target" == "--tui-rows" ]]; then
+    tui_rows 0
 elif [[ "$target" == "--list" ]]; then
     list_all
 elif [[ "$target" == "--all-safe" ]]; then

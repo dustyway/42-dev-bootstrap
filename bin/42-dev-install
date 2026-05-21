@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+# 42-dev-install — fzf TUI for installing components on the 42 cluster.
+# Counterpart to `42-dev-uninstall`; same picker layout, same key model.
+#
+# Usage:
+#   42-dev-install                      fzf TUI (default). In the picker:
+#                                         ↑/↓           move
+#                                         type          filter
+#                                         Enter         ask for the highlighted row:
+#                                                         Install
+#                                                         Install + autostart on login
+#                                                         Abort
+#                                         Esc           quit
+#   42-dev-install --list               text table instead of TUI
+#   42-dev-install --install-of <name>  (internal) run install action for one
+#                                       component, invoked by fzf's --bind
+#   42-dev-install --rows               (internal) emit row data for fzf reload
+#   42-dev-install --preview-of <name>  (internal) preview pane content
+#
+# Requires fzf for the TUI — run `fzf-bootstrap` once if it's missing.
+
+set -euo pipefail
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[42-dev-install] sgoinfre path not found for $USER" >&2; exit 1; }
+
+INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
+
+# Row format: name | bootstrap_cmd | sgo_subpath | restore_pattern | description
+# - bootstrap_cmd   : exact argv to exec (e.g. "emacs-bootstrap", "jb-bootstrap IIU")
+# - sgo_subpath     : "installed?" check — passed to expand path under $SGO
+# - restore_pattern : ERE for `*-bootstrap` invocation in shell init
+# - description     : one-line human description (shown in TUI Notes column)
+COMPONENTS=(
+    "emacs|emacs-bootstrap|emacs|emacs-bootstrap|Modern Emacs (tree-sitter + native-comp, GTK3/X11) ~100 MB"
+    "clangd|clangd-bootstrap|clangd|clangd-bootstrap|clangd LSP server for C/C++ ~250 MB"
+    "postgres|postgres-bootstrap|postgres|postgres-bootstrap|PostgreSQL server binary (theseus-rs prebuilt) ~40 MB"
+    "gh|gh-bootstrap|gh|gh-bootstrap|GitHub CLI (cli/cli prebuilt) ~40 MB"
+    "act|act-bootstrap|act|act-bootstrap|Run GitHub Actions locally (nektos/act) ~20 MB"
+    "actionlint|actionlint-bootstrap|actionlint|actionlint-bootstrap|GitHub Actions workflow linter ~5 MB"
+    "graphviz|graphviz-bootstrap|graphviz|graphviz-bootstrap|graphviz dot/neato/fdp via apt-get download ~5 MB"
+    "inotify-tools|inotify-tools-bootstrap|inotify-tools|inotify-tools-bootstrap|inotifywait/inotifywatch (Phoenix dev live-reload) <1 MB"
+    "tailscale|tailscale-bootstrap|tailscale|tailscale-bootstrap|Tailscale VPN client (userspace SOCKS5) ~60 MB"
+    "fzf|fzf-bootstrap|fzf|fzf-bootstrap|fzf fuzzy finder (junegunn/fzf) ~2 MB"
+    "wx|wx-bootstrap|wx|wx-bootstrap|mise-bootstrap|wxWidgets 3.2 for Erlang's :observer ~80 MB"
+    "mise-data|mise-bootstrap|mise-data|mise-bootstrap|mise runtimes (reads ~/.config/mise/config.toml) varies"
+    "uv-tools|aider-bootstrap|uv-tools|aider-bootstrap|aider terminal pair-programmer via uv tool ~500 MB"
+    "cuda|cuda-bootstrap|cuda|cuda-bootstrap|CUDA libraries (extracts .debs without sudo) ~3.5 GB"
+    "ollama|ollama-bootstrap|ollama|ollama-bootstrap|Ollama daemon + model pulls from ~/Apps/etc/ollama-models.txt"
+    "jetbrains/idea-ultimate|jb-bootstrap IIU|jetbrains/idea-ultimate|jb-bootstrap[[:space:]]+IIU([[:space:]@]|\$)|IntelliJ IDEA Ultimate ~4 GB"
+    "jetbrains/idea-community|jb-bootstrap IIC|jetbrains/idea-community|jb-bootstrap[[:space:]]+IIC([[:space:]@]|\$)|IntelliJ IDEA Community ~1 GB"
+    "jetbrains/webstorm|jb-bootstrap WS|jetbrains/webstorm|jb-bootstrap[[:space:]]+WS([[:space:]@]|\$)|WebStorm ~3 GB"
+    "jetbrains/phpstorm|jb-bootstrap PS|jetbrains/phpstorm|jb-bootstrap[[:space:]]+PS([[:space:]@]|\$)|PhpStorm ~3 GB"
+    "jetbrains/pycharm-professional|jb-bootstrap PCP|jetbrains/pycharm-professional|jb-bootstrap[[:space:]]+PCP([[:space:]@]|\$)|PyCharm Professional ~3 GB"
+    "jetbrains/pycharm-community|jb-bootstrap PCC|jetbrains/pycharm-community|jb-bootstrap[[:space:]]+PCC([[:space:]@]|\$)|PyCharm Community ~1 GB"
+    "jetbrains/clion|jb-bootstrap CL|jetbrains/clion|jb-bootstrap[[:space:]]+CL([[:space:]@]|\$)|CLion ~2.5 GB"
+    "jetbrains/goland|jb-bootstrap GO|jetbrains/goland|jb-bootstrap[[:space:]]+GO([[:space:]@]|\$)|GoLand ~2.5 GB"
+    "jetbrains/rubymine|jb-bootstrap RM|jetbrains/rubymine|jb-bootstrap[[:space:]]+RM([[:space:]@]|\$)|RubyMine ~3 GB"
+    "jetbrains/rider|jb-bootstrap RD|jetbrains/rider|jb-bootstrap[[:space:]]+RD([[:space:]@]|\$)|Rider ~3 GB"
+    "jetbrains/datagrip|jb-bootstrap DG|jetbrains/datagrip|jb-bootstrap[[:space:]]+DG([[:space:]@]|\$)|DataGrip ~2 GB"
+    "jetbrains/aqua|jb-bootstrap AC|jetbrains/aqua|jb-bootstrap[[:space:]]+AC([[:space:]@]|\$)|Aqua ~3 GB"
+    "jetbrains/rustrover|jb-bootstrap RR|jetbrains/rustrover|jb-bootstrap[[:space:]]+RR([[:space:]@]|\$)|RustRover ~3 GB"
+)
+
+# Strict 5-field row parser (wx's restore_pattern itself contains `|`).
+parse_row() {
+    local needle="$1" row
+    for row in "${COMPONENTS[@]}"; do
+        C_NAME=${row%%|*}
+        [[ "$C_NAME" != "$needle" ]] && continue
+        local rest=${row#*|}
+        C_CMD=${rest%%|*};  rest=${rest#*|}
+        C_PATH=${rest%%|*}; rest=${rest#*|}
+        C_DESC=${rest##*|}
+        C_PATTERN=${rest%|*}
+        return 0
+    done
+    return 1
+}
+
+# ─── helpers ─────────────────────────────────────────────────────────────────
+
+format_bytes() {
+    local b="$1"
+    if   (( b >= 1024**3 )); then awk -v b="$b" 'BEGIN{printf "%.1fG", b/1024/1024/1024}'
+    elif (( b >= 1024**2 )); then awk -v b="$b" 'BEGIN{printf "%.0fM", b/1024/1024}'
+    elif (( b >= 1024   )); then awk -v b="$b" 'BEGIN{printf "%.0fK", b/1024}'
+    else echo "${b}B"
+    fi
+}
+
+installed_size() {
+    local path="$SGO/$1"
+    [[ -e "$path" ]] || { echo "-"; return; }
+    du -sh "$path" 2>/dev/null | awk '{print $1}'
+}
+
+is_installed() {
+    [[ -e "$SGO/$1" ]]
+}
+
+# Count non-commented init-file lines matching the ERE pattern.
+init_match_count() {
+    local pattern="$1" file count=0
+    [[ -z "$pattern" ]] && { echo 0; return; }
+    for file in "${INIT_FILES[@]}"; do
+        [[ -f "$file" ]] || continue
+        while IFS=: read -r line_no text; do
+            [[ -z "$line_no" ]] && continue
+            [[ "$text" =~ ^[[:space:]]*# ]] && continue
+            count=$((count + 1))
+        done < <(grep -nE -- "$pattern" "$file" 2>/dev/null || true)
+    done
+    echo "$count"
+}
+
+# Build the autostart line we'd add to ~/.zprofile for a given bootstrap_cmd.
+# Format matches the existing entries (subshell + nohup, detached).
+autostart_line_for() {
+    local cmd="$1"
+    printf '(nohup ~/Apps/bin/%s &>/dev/null &)' "$cmd"
+}
+
+# Append the autostart line to ~/.zprofile if not already present (anywhere
+# in any init file). Returns 0 if appended, 1 if a matching active line is
+# already there.
+add_autostart() {
+    local pattern="$1" cmd="$2"
+    local count; count=$(init_match_count "$pattern")
+    if (( count > 0 )); then return 1; fi
+    local line; line=$(autostart_line_for "$cmd")
+    # Ensure the file ends with a newline before appending.
+    if [[ -s "$HOME/.zprofile" ]] && [[ "$(tail -c1 "$HOME/.zprofile" | od -An -c | tr -d ' ')" != '\n' ]]; then
+        printf '\n' >> "$HOME/.zprofile"
+    fi
+    printf '%s\n' "$line" >> "$HOME/.zprofile"
+    return 0
+}
+
+# ─── actions ─────────────────────────────────────────────────────────────────
+
+list_all() {
+    local row name cmd path pattern desc
+    printf "%-30s %-12s  %-7s  %s\n" "Component" "Installed" "Login" "Notes"
+    printf "%-30s %-12s  %-7s  %s\n" "---------" "---------" "-----" "-----"
+    for row in "${COMPONENTS[@]}"; do
+        parse_row "${row%%|*}"
+        name=$C_NAME; cmd=$C_CMD; path=$C_PATH; pattern=$C_PATTERN; desc=$C_DESC
+        local size; size=$(installed_size "$path")
+        local installed_col; if is_installed "$path"; then installed_col="yes ($size)"; else installed_col="no"; fi
+        local n; n=$(init_match_count "$pattern")
+        local login_col; if (( n > 0 )); then login_col="yes($n)"; else login_col="-"; fi
+        printf "%-30s %-12s  %-7s  %s\n" "$name" "$installed_col" "$login_col" "$desc"
+    done
+}
+
+# Emit rows for fzf consumption (no header, no separator).
+setup_rows() {
+    local row
+    for row in "${COMPONENTS[@]}"; do
+        parse_row "${row%%|*}"
+        local size; size=$(installed_size "$C_PATH")
+        local installed_col; if is_installed "$C_PATH"; then installed_col="yes ($size)"; else installed_col="no"; fi
+        local n; n=$(init_match_count "$C_PATTERN")
+        local login_col; if (( n > 0 )); then login_col="yes($n)"; else login_col="-"; fi
+        printf '%-30s %-12s  %-8s  %s\n' "$C_NAME" "$installed_col" "$login_col" "$C_DESC"
+    done
+}
+
+# fzf preview pane for one component.
+preview_one() {
+    local name="$1"
+    if ! parse_row "$name"; then echo "unknown component: $name"; return; fi
+    printf "Component:    %s\n" "$C_NAME"
+    printf "Bootstrap:    %s\n" "$C_CMD"
+    printf "Description:  %s\n\n" "$C_DESC"
+
+    if is_installed "$C_PATH"; then
+        printf "Installed:    YES  (size: %s, at %s)\n" "$(installed_size "$C_PATH")" "$SGO/$C_PATH"
+    else
+        printf "Installed:    NO\n"
+    fi
+
+    local n; n=$(init_match_count "$C_PATTERN")
+    if (( n > 0 )); then
+        printf "Autostart:    YES  (%d line(s) in shell init)\n\n" "$n"
+        local file line_no text
+        for file in "${INIT_FILES[@]}"; do
+            [[ -f "$file" ]] || continue
+            while IFS=: read -r line_no text; do
+                [[ -z "$line_no" ]] && continue
+                [[ "$text" =~ ^[[:space:]]*# ]] && continue
+                printf "  %s:%s\n    %s\n" "$file" "$line_no" "$text"
+            done < <(grep -nE -- "$C_PATTERN" "$file" 2>/dev/null || true)
+        done
+    else
+        printf "Autostart:    NO  (next login will NOT install this)\n"
+        echo
+        printf "Install + autostart would append to ~/.zprofile:\n"
+        printf "  %s\n" "$(autostart_line_for "$C_CMD")"
+    fi
+}
+
+# Per-item interactive action — invoked by fzf via `setup --install-of <name>`.
+install_interactive() {
+    local name="$1"
+    if ! parse_row "$name"; then
+        echo "[42-dev-install] unknown component: $name" >&2
+        sleep 1; return 1
+    fi
+    clear
+    preview_one "$name"
+    echo
+    cat <<EOF
+What would you like to do with '${C_NAME}'?
+  [i] Install            — run \`${C_CMD}\` once (no shell init changes)
+  [s] Install + autostart — install AND add a launch line to ~/.zprofile
+                           so the component is re-installed on each login
+                           (self-heals after /sgoinfre wipes)
+  [a] Abort              — do nothing, return to the picker
+
+EOF
+    local ans
+    read -r -p "Action? [i/s/a] " ans
+
+    local with_autostart=0
+    case "${ans:-a}" in
+        i|I) ;;
+        s|S) with_autostart=1 ;;
+        *)   echo "[42-dev-install] aborted"; return 0 ;;
+    esac
+
+    echo
+    local label="install"; (( with_autostart )) && label="install + autostart"
+    local confirm
+    read -r -p "Confirm: ${label} '${C_NAME}' — really do this? [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "[42-dev-install] aborted (no changes made)"
+        echo
+        read -r -p "[press Enter to return to the picker] " _
+        return 0
+    fi
+
+    echo
+    echo "[42-dev-install] running: $C_CMD"
+    # Run the bootstrap. C_CMD is space-separated like `jb-bootstrap IIU`.
+    if ! eval "$HOME/Apps/bin/$C_CMD"; then
+        echo "[42-dev-install] bootstrap failed — aborting autostart change" >&2
+    elif (( with_autostart )); then
+        if add_autostart "$C_PATTERN" "$C_CMD"; then
+            echo
+            echo "[42-dev-install] added autostart line to ~/.zprofile"
+        else
+            echo
+            echo "[42-dev-install] autostart already present, leaving init files alone"
+        fi
+    fi
+    echo
+    read -r -p "[press Enter to return to the picker] " _
+}
+
+tui_mode() {
+    if ! command -v fzf >/dev/null 2>&1; then
+        echo "[42-dev-install] fzf not found on PATH" >&2
+        echo "        install it with: fzf-bootstrap" >&2
+        exit 1
+    fi
+    local self; self="$(realpath "$0")"
+
+    local header="Enter  = act on highlighted row (asks: Install / Install+autostart / Abort)
+Esc    = quit  •  ↑/↓ move  •  type to filter"
+
+    setup_rows | \
+        fzf --header="$header" \
+            --preview "$self --preview-of {1}" \
+            --preview-window=right:55%:wrap \
+            --bind "enter:execute($self --install-of {1})+reload($self --rows)" \
+            --layout=reverse \
+            --height=100% || true
+}
+
+# ─── arg parsing ─────────────────────────────────────────────────────────────
+
+target=""
+preview_name=""
+install_name=""
+expecting_value=""
+for arg in "$@"; do
+    if [[ -n "$expecting_value" ]]; then
+        case "$expecting_value" in
+            preview-of) preview_name="$arg" ;;
+            install-of) install_name="$arg" ;;
+        esac
+        expecting_value=""; continue
+    fi
+    case "$arg" in
+        --list)         target="--list" ;;
+        --rows)         target="--rows" ;;
+        --preview-of)   expecting_value="preview-of" ;;
+        --install-of)   expecting_value="install-of" ;;
+        -h|--help)      sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --*)            echo "[42-dev-install] unknown flag: $arg" >&2; exit 2 ;;
+        *)              echo "[42-dev-install] unknown arg: $arg" >&2; exit 2 ;;
+    esac
+done
+
+if [[ -n "$preview_name" ]]; then
+    preview_one "$preview_name"
+elif [[ -n "$install_name" ]]; then
+    install_interactive "$install_name"
+elif [[ "$target" == "--list" ]]; then
+    list_all
+elif [[ "$target" == "--rows" ]]; then
+    setup_rows
+elif [[ -z "$target" ]]; then
+    tui_mode
+fi

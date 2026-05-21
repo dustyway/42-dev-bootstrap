@@ -28,6 +28,7 @@ install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-b
 install -m 0755 "$REPO_ROOT/bin/jb-patch-elixir-debugger"  "$HOME/Apps/bin/jb-patch-elixir-debugger"
 install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
 install -m 0755 "$REPO_ROOT/bin/cleanup"                   "$HOME/Apps/bin/cleanup"
+install -m 0755 "$REPO_ROOT/bin/setup"                     "$HOME/Apps/bin/setup"
 
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
     cp "$REPO_ROOT/etc/npm-globals.txt.example" "$HOME/Apps/etc/npm-globals.txt"
