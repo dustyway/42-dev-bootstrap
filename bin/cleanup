@@ -86,6 +86,22 @@ parse_row() {
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
+# Single-line progress bar to stderr. No-op when stderr isn't a tty (so the
+# noise doesn't end up in pipes / preview captures).
+#   progress <cur> <total> <label>
+#   progress_done                  clears the line
+progress() {
+    [[ -t 2 ]] || return 0
+    local cur="$1" total="$2" label="$3"
+    local width=20 filled empty bar
+    filled=$(( cur * width / total ))
+    empty=$(( width - filled ))
+    bar=$(printf '%*s' "$filled" '' | tr ' ' '#')
+    bar+=$(printf '%*s' "$empty"  '' | tr ' ' '.')
+    printf "\r\033[K[%s] %2d/%d  %s" "$bar" "$cur" "$total" "$label" >&2
+}
+progress_done() { [[ -t 2 ]] && printf "\r\033[K" >&2 || true; }
+
 expand_globs() {
     local IFS=':' glob
     read -ra globs <<<"$1"
@@ -228,19 +244,27 @@ login_status() {
 list_all() {
     local row name globs class pattern note paths size_str
     local total_safe=0 total_data=0 bytes
-    printf "%-18s %8s  %-5s  %-7s  %s\n" "Component" "Size" "Class" "Login" "Notes"
-    printf "%-18s %8s  %-5s  %-7s  %s\n" "---------" "----" "-----" "-----" "-----"
+    local total=${#COMPONENTS[@]} idx=0
+    # Build all the rows first (with progress), then print the table — keeps
+    # the table itself unbroken by progress redraws.
+    local out=()
     for row in "${COMPONENTS[@]}"; do
+        idx=$((idx + 1))
         parse_row "${row%%|*}"
         name=$C_NAME; globs=$C_GLOBS; class=$C_CLASS; pattern=$C_PATTERN; note=$C_NOTE
+        progress "$idx" "$total" "sizing $name"
         mapfile -t paths < <(expand_globs "$globs")
         (( ${#paths[@]} == 0 )) && continue
         bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
         size_str=$(format_bytes "$bytes")
-        printf "%-18s %8s  %-5s  %-7s  %s\n" "$name" "$size_str" "$class" "$(login_status "$pattern")" "$note"
+        out+=("$(printf "%-18s %8s  %-5s  %-7s  %s" "$name" "$size_str" "$class" "$(login_status "$pattern")" "$note")")
         if [[ "$class" == "safe" ]]; then total_safe=$((total_safe + bytes))
         else total_data=$((total_data + bytes)); fi
     done
+    progress_done
+    printf "%-18s %8s  %-5s  %-7s  %s\n" "Component" "Size" "Class" "Login" "Notes"
+    printf "%-18s %8s  %-5s  %-7s  %s\n" "---------" "----" "-----" "-----" "-----"
+    printf '%s\n' "${out[@]}"
     echo
     printf "Reclaimable (safe): %s\n" "$(format_bytes "$total_safe")"
     printf "Reclaimable (DATA): %s\n" "$(format_bytes "$total_data")"
@@ -397,8 +421,11 @@ tui_mode() {
     local self; self="$(realpath "$0")"
 
     local rows=() row bytes size_str login paths
+    local total=${#COMPONENTS[@]} idx=0
     for row in "${COMPONENTS[@]}"; do
+        idx=$((idx + 1))
         parse_row "${row%%|*}"
+        progress "$idx" "$total" "sizing $C_NAME"
         mapfile -t paths < <(expand_globs "$C_GLOBS")
         (( ${#paths[@]} == 0 )) && continue
         bytes=$(printf '%s\n' "${paths[@]}" | total_bytes)
@@ -406,6 +433,7 @@ tui_mode() {
         login=$(login_status "$C_PATTERN")
         rows+=("$(printf '%-18s %7s  %-4s  %-8s  %s' "$C_NAME" "$size_str" "$C_CLASS" "$login" "$C_NOTE")")
     done
+    progress_done
 
     local header="TAB / Shift-TAB toggle  •  Esc abort
 Enter   = Uninstall   (default — remove files AND comment out matching init lines)
