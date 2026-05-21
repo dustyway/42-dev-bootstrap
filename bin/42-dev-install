@@ -8,7 +8,7 @@
 #                                         type          filter
 #                                         Enter         ask for the highlighted row:
 #                                                         Install
-#                                                         Install + autostart on login
+#                                                         Install + self-heal on login
 #                                                         Abort
 #                                         Esc           quit
 #   42-dev-install --list               text table instead of TUI
@@ -70,21 +70,21 @@ init_match_count() {
     echo "$count"
 }
 
-# Build the autostart line we'd add to ~/.zprofile for a given bootstrap_cmd.
+# Build the self-heal line we'd add to ~/.zprofile for a given bootstrap_cmd.
 # Format matches the existing entries (subshell + nohup, detached).
-autostart_line_for() {
+self_heal_line_for() {
     local cmd="$1"
     printf '(nohup ~/Apps/bin/%s &>/dev/null &)' "$cmd"
 }
 
-# Append the autostart line to ~/.zprofile if not already present (anywhere
+# Append the self-heal line to ~/.zprofile if not already present (anywhere
 # in any init file). Returns 0 if appended, 1 if a matching active line is
 # already there.
-add_autostart() {
+add_self_heal() {
     local pattern="$1" cmd="$2"
     local count; count=$(init_match_count "$pattern")
     if (( count > 0 )); then return 1; fi
-    local line; line=$(autostart_line_for "$cmd")
+    local line; line=$(self_heal_line_for "$cmd")
     # Ensure the file ends with a newline before appending.
     if [[ -s "$HOME/.zprofile" ]] && [[ "$(tail -c1 "$HOME/.zprofile" | od -An -c | tr -d ' ')" != '\n' ]]; then
         printf '\n' >> "$HOME/.zprofile"
@@ -139,7 +139,7 @@ preview_one() {
 
     local n; n=$(init_match_count "$C_PATTERN")
     if (( n > 0 )); then
-        printf "Autostart:    YES  (%d line(s) in shell init)\n\n" "$n"
+        printf "Self-heal:    YES  (%d line(s) in shell init)\n\n" "$n"
         local file line_no text
         for file in "${INIT_FILES[@]}"; do
             [[ -f "$file" ]] || continue
@@ -150,10 +150,10 @@ preview_one() {
             done < <(grep -nE -- "$C_PATTERN" "$file" 2>/dev/null || true)
         done
     else
-        printf "Autostart:    NO  (next login will NOT install this)\n"
+        printf "Self-heal:    NO  (next login will NOT install this)\n"
         echo
-        printf "Install + autostart would append to ~/.zprofile:\n"
-        printf "  %s\n" "$(autostart_line_for "$C_CMD")"
+        printf "Install + self-heal would append to ~/.zprofile:\n"
+        printf "  %s\n" "$(self_heal_line_for "$C_CMD")"
     fi
 }
 
@@ -170,7 +170,7 @@ install_interactive() {
     local choice
     choice=$(printf '%s\n' \
         "install            — run \`${C_CMD}\` once (no shell init changes)" \
-        "install+autostart  — install AND add a launch line to ~/.zprofile" \
+        "install+self-heal  — install AND add a launch line to ~/.zprofile" \
         "abort              — do nothing, return to the picker" \
       | fzf --prompt="Action for '${C_NAME}' > " \
             --preview "$self --preview-of '$name'" \
@@ -180,10 +180,10 @@ install_interactive() {
             --no-multi \
             --height=100%) || true
 
-    local with_autostart=0
+    local with_self_heal=0
     case "${choice%% *}" in
         install)            ;;
-        install+autostart)  with_autostart=1 ;;
+        install+self-heal)  with_self_heal=1 ;;
         *)                  return 0 ;;  # abort or Esc
     esac
 
@@ -198,8 +198,8 @@ install_interactive() {
         read -r -p "[press Enter to return to the picker] " _
         return 1
     fi
-    if (( with_autostart )); then
-        add_autostart "$C_PATTERN" "$C_CMD" || true
+    if (( with_self_heal )); then
+        add_self_heal "$C_PATTERN" "$C_CMD" || true
     fi
 }
 
@@ -211,7 +211,7 @@ tui_mode() {
     fi
     local self; self="$(realpath "$0")"
 
-    local header="Enter  = act on highlighted row (asks: Install / Install+autostart / Abort)
+    local header="Enter  = act on highlighted row (asks: Install / Install+self-heal / Abort)
 Esc    = quit  •  ↑/↓ move  •  type to filter"
 
     setup_rows | \
