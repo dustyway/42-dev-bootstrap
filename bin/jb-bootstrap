@@ -229,7 +229,7 @@ done
 #    specific state (workspace/, log/, jdbc-drivers/, eval/, port, …).
 BACKUP="$HOME/Apps/etc/jetbrains-backup/$SLUG"
 mkdir -p "$BACKUP"
-KEEP=(options keymaps codestyles colors fileTemplates templates tools inspection scratches.xml disabled_plugins.txt)
+KEEP=(options keymaps codestyles colors fileTemplates templates tools inspection scratches.xml disabled_plugins.txt "${LAUNCHER}64.vmoptions")
 if [[ -d "$APP_CONFIG/config/options" ]]; then
     for item in "${KEEP[@]}"; do
         src="$APP_CONFIG/config/$item"
