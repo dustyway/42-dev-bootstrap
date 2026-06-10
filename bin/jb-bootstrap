@@ -216,15 +216,6 @@ for spec in "${PLUGINS[@]+"${PLUGINS[@]}"}"; do
     unzip -q -o "$tmp/plugin.zip" -d "$APP_CONFIG/plugins"
     rm -rf "$tmp"
     printf '%s\n%s\n' "$tag" "$topdir" > "$marker"
-
-    # Post-install patches: some plugins ship bugs we can locally fix. Keyed
-    # by owner/repo so adding more later is a one-line case entry.
-    case "$repo" in
-        KronicDeth/intellij-elixir)
-            "$HOME/Apps/bin/jb-patch-elixir-debugger" "$APP_CONFIG/plugins/$topdir" || \
-                echo "[jb-bootstrap:$SLUG] warning: elixir debugger patch failed" >&2
-            ;;
-    esac
 done
 
 # 7. Back up / restore IDE settings. $APP_CONFIG is on sgoinfre and can vanish

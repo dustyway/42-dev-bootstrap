@@ -147,12 +147,6 @@ On a fresh machine using a self-hosted control server (Headscale), the first
 Plain `tailscale up` would register with the official Tailscale control plane
 instead. The URL is saved in the auth state, so it's needed only once.
 
-**`jb-patch-elixir-debugger`**
-Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
-modern Elixir (1.15+) where `mix` runs with a reduced code path that drops
-Erlang's `debugger-*/ebin`. Runs automatically after the Elixir plugin
-installs via `jb-bootstrap`.
-
 **`jb-sync-elixir-sdk`**
 Rewrites every JetBrains product's `jdk.table.xml` so the `Elixir SDK` and
 `Erlang SDK for Elixir SDK` entries point at the current mise-managed
@@ -256,12 +250,6 @@ Won't fit the constraints (don't try):
   kill it.
 - Rootless Podman/Docker — needs `/etc/subuid` + `/etc/subgid` entries, which
   need root.
-
-## Known issues
-
-- **Elixir plugin debugger** `:int.interpreted/0` crash on Elixir 1.15+ —
-  auto-patched by `jb-patch-elixir-debugger`. Reapplied each time the plugin
-  is (re)installed.
 
 ## License
 
