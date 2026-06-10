@@ -142,6 +142,10 @@ Traffic to the tailnet routes through a local SOCKS5 proxy at `127.0.0.1:1055`
 auto-injects the non-default socket path so `tailscale up` / `tailscale status`
 work as-is. Auth state lives in `~/.config/tailscale/` (`$HOME`) — tiny,
 survives `/sgoinfre` wipes with no re-auth.
+On a fresh machine using a self-hosted control server (Headscale), the first
+`tailscale up` must point at it: `tailscale up --login-server=https://headscale.example.com`.
+Plain `tailscale up` would register with the official Tailscale control plane
+instead. The URL is saved in the auth state, so it's needed only once.
 
 **`jb-patch-elixir-debugger`**
 Patches `intellij-elixir`'s debugger so `:int.interpreted/0` doesn't fail on
