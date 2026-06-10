@@ -194,8 +194,8 @@ auto-detects which per-tool extras to apply.
 [tools]
 node = "24"       # → npm globals from ~/Apps/etc/npm-globals.txt
 go = "1.26.3"
-elixir = "1.19.5" # → hex / rebar / phx_new archives; IEx GTK filter
-erlang = "28.5"   # → wx 3.2 build; asdf-erlang source compile; LD_LIBRARY_PATH
+elixir = "1.20.1-otp-29" # → hex / rebar / phx_new archives; IEx GTK filter
+erlang = "29.0.2"        # → wx 3.2 build; asdf-erlang source compile; LD_LIBRARY_PATH
 ```
 
 Only add the tools you actually use — the bootstrap skips every section whose
