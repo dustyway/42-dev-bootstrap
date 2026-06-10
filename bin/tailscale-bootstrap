@@ -81,7 +81,7 @@ if "$HOME/bin/tailscale" status >/dev/null 2>&1; then
     echo "[tailscale-serve] already running"
     exit 0
 fi
-nohup "$HOME/bin/tailscaled" \\
+setsid "$HOME/bin/tailscaled" \\
     --tun=userspace-networking \\
     --socket="${SOCKET}" \\
     --state="${STATE_DIR}/tailscaled.state" \\

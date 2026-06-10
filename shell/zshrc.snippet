@@ -7,6 +7,11 @@ export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
 eval "$(mise activate zsh)"
 
+# Start Tailscale userspace daemon (SOCKS5 on 127.0.0.1:1055).
+# Backgrounded (&!) — on cold start the launcher polls up to 10s for the
+# daemon, which would otherwise block the prompt.
+[[ -x "$HOME/bin/tailscale-serve" ]] && "$HOME/bin/tailscale-serve" &>/dev/null &!
+
 # Minimal prompt with git branch (requires zsh's vcs_info). Optional.
 autoload -Uz vcs_info
 precmd() { vcs_info }
