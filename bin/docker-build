@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# docker-build — `docker buildx build` with a persistent layer cache on
+# /sgoinfre, so a /goinfre wipe doesn't cost you a full rebuild. (Recompiling
+# native deps from a cold cache is the expensive part — this keeps it warm
+# across wipes.)
+#
+# Why this exists: Docker's data-root lives on /goinfre because overlayfs can't
+# run on the NFS /sgoinfre (see docker-bootstrap). So every image, layer, and
+# build cache is wiped when another user logs in. BuildKit's `type=local` cache
+# export writes plain blob files, which DO live happily on NFS — so we stash the
+# build cache on /sgoinfre and re-import it on the next build.
+#
+# `type=local` cache requires the docker-container BuildKit driver (the default
+# "docker" driver only does inline/registry cache). That builder is itself a
+# container in the wiped data-root, so we (re)create it on demand; the cache it
+# imports from lives on /sgoinfre and survives regardless.
+#
+# Usage: exactly like `docker buildx build`, e.g.
+#   docker-build --load -t myapp:latest .
+#   docker-build --push -t ghcr.io/<owner>/myapp:latest .
+#
+# NOTE: with the container driver the result is NOT auto-loaded into
+# `docker images` — pass --load (single-platform) or --push yourself, same as
+# any buildx container build.
+#
+# Reset the cache if it creeps toward the 30 GB /sgoinfre quota:
+#   rm -rf /sgoinfre/goinfre/Perso/*<you>*/docker-buildcache
+
+set -euo pipefail
+
+if ! docker buildx version >/dev/null 2>&1; then
+    echo "[docker-build] docker buildx not available" >&2
+    exit 1
+fi
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[docker-build] sgoinfre path not found for $USER" >&2; exit 1; }
+
+CACHE="$SGO/docker-buildcache"
+BUILDER="sgoinfre-cache"
+mkdir -p "$CACHE"
+
+# Heal/create the docker-container builder (lost on every /goinfre wipe). The
+# cache it imports from lives on /sgoinfre, so a fresh builder warms instantly.
+if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+    echo "[docker-build] creating BuildKit builder '$BUILDER' (once per /goinfre lifetime)"
+    docker buildx create --name "$BUILDER" --driver docker-container --bootstrap >/dev/null
+fi
+
+exec docker buildx build --builder "$BUILDER" \
+    --cache-from "type=local,src=$CACHE" \
+    --cache-to "type=local,dest=$CACHE,mode=max" \
+    "$@"

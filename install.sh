@@ -15,6 +15,7 @@ install -m 0755 "$REPO_ROOT/bin/wx-bootstrap"              "$HOME/Apps/bin/wx-bo
 install -m 0755 "$REPO_ROOT/bin/emacs-bootstrap"           "$HOME/Apps/bin/emacs-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/postgres-bootstrap"        "$HOME/Apps/bin/postgres-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/docker-bootstrap"          "$HOME/Apps/bin/docker-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/docker-build"             "$HOME/Apps/bin/docker-build"
 install -m 0755 "$REPO_ROOT/bin/inotify-tools-bootstrap"   "$HOME/Apps/bin/inotify-tools-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/clangd-bootstrap"          "$HOME/Apps/bin/clangd-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/gh-bootstrap"              "$HOME/Apps/bin/gh-bootstrap"

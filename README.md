@@ -88,6 +88,25 @@ The script only restarts the daemon when the config changed or the live root is
 wrong, and never deletes the old `~/.local/share/docker` — so the switch is one
 config line to reverse (it prints the `rm -rf` to reclaim that quota when ready).
 
+**`docker-build`**
+A `docker buildx build` wrapper that keeps the BuildKit layer cache on
+`/sgoinfre` so a `/goinfre` wipe doesn't cost a full rebuild (recompiling
+native deps from a cold cache is the slow part). Since the
+data-root must stay on volatile `/goinfre` (overlayfs can't run on the NFS
+`/sgoinfre`), images and build cache are wiped with it — but BuildKit's
+`type=local` cache is just blob files, which *do* live fine on NFS. The wrapper
+stashes the cache at `$SGO/docker-buildcache` and re-imports it next build.
+`type=local` needs the `docker-container` builder driver (the default `docker`
+driver only does inline/registry cache); that builder is itself a container in
+the wiped data-root, so the wrapper recreates it on demand — the cache it pulls
+from persists on `/sgoinfre`. Use it exactly like `docker buildx build`:
+```sh
+docker-build --push -t ghcr.io/<owner>/myapp:latest .
+```
+Note: with the container driver the result isn't auto-loaded into `docker
+images` — pass `--load` or `--push` yourself. Registry-backed images
+(`docker compose pull`) survive a wipe on their own and need none of this.
+
 **`inotify-tools-bootstrap`**
 Installs `inotifywait` / `inotifywatch` — the file watchers Phoenix's
 `file_system` dep uses for dev live-reload. mise has no plugin, apt needs
