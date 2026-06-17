@@ -71,6 +71,23 @@ source needs bison + flex, which aren't in mise). Extracts to
 `initdb`, …) into `~/bin`. `PGDATA` is per-project and **not** managed here —
 run `initdb -D /sgoinfre/.../<app>-pgdata` inside your app repo.
 
+**`docker-bootstrap`**
+Repoints **rootless** Docker's data-root at `/goinfre/$USER/docker` and heals
+the config after a `/goinfre` wipe. Does *not* install Docker — it relies on
+the cluster's rootless Docker (the `docker` CLI + the `docker` systemd `--user`
+unit). Docker's data-root (images, volumes, containers — multiple GB) otherwise
+defaults to `~/.local/share/docker`, which lives in `$HOME` and burns through
+the 5 GB iSCSI quota (a fresh dev stack alone was 3.3 GB). `/goinfre` is local
+disk, ~unlimited and fastest — at the cost of being wiped on the next user's
+login, which is fine since images/volumes are reproducible (rebuild, re-pull,
+re-seed). `daemon.json` is kept as a **real file in `$HOME`** (`~/.config/docker`,
+replacing the old volatile `/goinfre` symlink if present): it's tiny, and being
+present on cold boot stops the `enabled` daemon from starting with the default
+root and rebuilding gigabytes back into the quota before the bootstrap runs.
+The script only restarts the daemon when the config changed or the live root is
+wrong, and never deletes the old `~/.local/share/docker` — so the switch is one
+config line to reverse (it prints the `rm -rf` to reclaim that quota when ready).
+
 **`inotify-tools-bootstrap`**
 Installs `inotifywait` / `inotifywatch` — the file watchers Phoenix's
 `file_system` dep uses for dev live-reload. mise has no plugin, apt needs
@@ -180,6 +197,7 @@ nohup $HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & d
 nohup $HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
+nohup $HOME/Apps/bin/docker-bootstrap &>/dev/null & disown
 ```
 
 Backgrounded so they don't block the login.
@@ -213,6 +231,8 @@ tool isn't in your config. Global npm packages live in
 | mise runtimes | ✅ | `mise install` reads config.toml |
 | Emacs binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
 | PostgreSQL binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
+| Docker config on /goinfre wipe | ✅ | `daemon.json` kept in `$HOME`; data-root re-created on /goinfre + daemon restarted |
+| Docker images/volumes/containers | ❌ | data-root on volatile /goinfre — reproducible (rebuild / re-pull / re-seed) |
 | inotify-tools binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
 | clangd binary on /sgoinfre | ✅ | Re-extract from cached zip, else re-download from clangd/clangd Release |
 | gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |

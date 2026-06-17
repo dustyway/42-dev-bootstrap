@@ -14,6 +14,7 @@ COMPONENTS=(
     "emacs|emacs-bootstrap|emacs|emacs-bootstrap|safe|Modern Emacs (tree-sitter + native-comp, GTK3/X11) ~100 MB"
     "clangd|clangd-bootstrap|clangd|clangd-bootstrap|safe|clangd LSP server for C/C++ ~250 MB"
     "postgres|postgres-bootstrap|postgres|postgres-bootstrap|safe|PostgreSQL server binary (theseus-rs prebuilt) ~40 MB"
+    "docker|docker-bootstrap|docker|docker-bootstrap|safe|Rootless Docker: data-root -> /goinfre, daemon.json healed in \$HOME (no sgoinfre payload)"
     "gh|gh-bootstrap|gh|gh-bootstrap|safe|GitHub CLI (cli/cli prebuilt) ~40 MB"
     "act|act-bootstrap|act|act-bootstrap|safe|Run GitHub Actions locally (nektos/act) ~20 MB"
     "actionlint|actionlint-bootstrap|actionlint|actionlint-bootstrap|safe|GitHub Actions workflow linter ~5 MB"

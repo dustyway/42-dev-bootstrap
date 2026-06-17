@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# docker-bootstrap — point rootless Docker's data-root at /goinfre and heal the
+# config after a /goinfre wipe. Safe to run every login (idempotent).
+#
+# This script does NOT install Docker — it relies on the cluster's rootless
+# Docker (docker CLI + the `docker` systemd *user* unit installed by
+# dockerd-rootless-setuptool). It manages two things:
+#
+#   1. Placement. Docker's data-root (images, volumes, containers — multiple GB)
+#      defaults to ~/.local/share/docker, which sits in $HOME and chews through
+#      the 5 GB iSCSI quota (a fresh dev stack alone was 3.3 GB). We repoint it
+#      at /goinfre/$USER/docker — local disk, ~unlimited, fastest tier. Cost:
+#      /goinfre is wiped when another user logs in, so images/volumes are
+#      volatile. That's fine for a dev box — they're all reproducible (rebuild,
+#      re-pull, re-seed) and nothing here deletes the old data-root, so a switch
+#      back is one config line away.
+#
+#   2. Healing. daemon.json is tiny, so it lives in $HOME where it's persistent
+#      and — crucially — present on cold boot. The `docker` user unit is
+#      `enabled` and starts at login *before* this script runs; if its config
+#      were on the volatile /goinfre tier (e.g. behind a symlink whose target
+#      was wiped), the daemon would start with the DEFAULT data-root and quietly
+#      rebuild gigabytes back into the $HOME quota. Keeping daemon.json in $HOME
+#      closes that race. If ~/.config/docker is a leftover symlink into /goinfre
+#      (the old layout), we replace it with a real directory, preserving any
+#      config the symlink still resolved to.
+#
+# ─── Placement summary ───────────────────────────────────────────────────────
+# data-root  → /goinfre/$USER/docker     volatile, huge, fast (reproducible)
+# daemon.json→ ~/.config/docker          persistent in $HOME, tiny
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+log() { echo "[docker-bootstrap] $*"; }
+
+if ! command -v docker >/dev/null 2>&1; then
+    log "no docker CLI on PATH — nothing to configure" >&2
+    exit 0
+fi
+
+DATA_ROOT="/goinfre/${USER}/docker"
+CONFIG_DIR="$HOME/.config/docker"
+DAEMON_JSON="$CONFIG_DIR/daemon.json"
+
+# systemctl --user needs XDG_RUNTIME_DIR; nohup'd login hooks may not export it.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+# ── 1. Ensure ~/.config/docker is a real directory in $HOME ──────────────────
+# The old layout symlinked it into /goinfre, which breaks on every wipe. Replace
+# the symlink with a real dir, migrating anything the symlink still pointed at
+# (registry auth in config.json, buildx state, …) so we don't drop live config.
+if [[ -L "$CONFIG_DIR" ]]; then
+    target="$(readlink -f "$CONFIG_DIR" 2>/dev/null || true)"
+    if [[ -n "$target" && -d "$target" ]]; then
+        log "replacing symlink $CONFIG_DIR -> $target with a real directory (migrating contents)"
+        staging="$(mktemp -d)"
+        cp -a "$target/." "$staging/" 2>/dev/null || true
+        rm -f "$CONFIG_DIR"
+        mkdir -p "$CONFIG_DIR"
+        cp -a "$staging/." "$CONFIG_DIR/" 2>/dev/null || true
+        rm -rf "$staging"
+    else
+        log "removing broken symlink $CONFIG_DIR (target gone after /goinfre wipe)"
+        rm -f "$CONFIG_DIR"
+        mkdir -p "$CONFIG_DIR"
+    fi
+elif [[ -e "$CONFIG_DIR" && ! -d "$CONFIG_DIR" ]]; then
+    log "$CONFIG_DIR exists and is neither a symlink nor a directory — refusing to touch it" >&2
+    exit 1
+else
+    mkdir -p "$CONFIG_DIR"
+fi
+
+# ── 2. Ensure the data-root exists on /goinfre ───────────────────────────────
+mkdir -p "$DATA_ROOT"
+
+# ── 3. Set data-root in daemon.json, preserving any other keys ───────────────
+changed=0
+tmp="$(mktemp)"
+if [[ -f "$DAEMON_JSON" ]] && jq -e . "$DAEMON_JSON" >/dev/null 2>&1; then
+    jq --arg dr "$DATA_ROOT" '. + {"data-root": $dr}' "$DAEMON_JSON" > "$tmp"
+else
+    [[ -f "$DAEMON_JSON" ]] && log "existing daemon.json is not valid JSON — rewriting minimal config" >&2
+    jq -n --arg dr "$DATA_ROOT" '{"data-root": $dr}' > "$tmp"
+fi
+if [[ ! -f "$DAEMON_JSON" ]] || ! cmp -s "$tmp" "$DAEMON_JSON"; then
+    mv "$tmp" "$DAEMON_JSON"
+    changed=1
+    log "wrote data-root=$DATA_ROOT to $DAEMON_JSON"
+else
+    rm -f "$tmp"
+fi
+
+# ── 4. (Re)start the rootless user daemon only when it matters ────────────────
+# This targets rootless Docker's per-user systemd unit. If there's no such unit
+# (e.g. a system daemon you don't control), we've still written the config —
+# leave the restart to whoever owns the daemon.
+if ! systemctl --user cat docker >/dev/null 2>&1; then
+    log "no 'docker' systemd --user unit — config written; restart the daemon yourself to apply"
+    exit 0
+fi
+
+live_root=""
+systemctl --user is-active --quiet docker \
+    && live_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+
+if (( changed )) || ! systemctl --user is-active --quiet docker || [[ "$live_root" != "$DATA_ROOT" ]]; then
+    log "restarting rootless docker (data-root: '${live_root:-stopped}' -> '$DATA_ROOT')"
+    systemctl --user enable docker >/dev/null 2>&1 || true
+    systemctl --user restart docker
+    for _ in $(seq 1 20); do
+        docker info >/dev/null 2>&1 && break
+        sleep 0.5
+    done
+else
+    log "already running with data-root=$DATA_ROOT — nothing to do"
+fi
+
+final_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+if [[ "$final_root" == "$DATA_ROOT" ]]; then
+    log "ok — Docker Root Dir = $final_root"
+else
+    log "WARNING: Docker Root Dir is '$final_root', expected '$DATA_ROOT'" >&2
+fi
+
+# The previous data-root is left intact so the switch is reversible. Once you're
+# happy, reclaim the $HOME quota it holds:  rm -rf ~/.local/share/docker
+OLD_ROOT="$HOME/.local/share/docker"
+if [[ -d "$OLD_ROOT" && "$OLD_ROOT" != "$DATA_ROOT" ]] && [[ -n "$(ls -A "$OLD_ROOT" 2>/dev/null)" ]]; then
+    # du exits non-zero on rootless Docker's permission-restricted subdirs
+    # (overlay2/, containers/, …); with `set -o pipefail` that would abort the
+    # script, so swallow it — the size is just a cosmetic hint.
+    sz="$(du -sh "$OLD_ROOT" 2>/dev/null | awk '{print $1}' || true)"
+    log "old data-root still at $OLD_ROOT (${sz:-?}) — reclaim quota with: rm -rf $OLD_ROOT"
+fi
