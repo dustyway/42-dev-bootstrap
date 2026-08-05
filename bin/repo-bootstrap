@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# repo-bootstrap — re-clone a git repository onto /goinfre on login if it's
+# missing. Safe to run every login (idempotent).
+#
+# /goinfre is fast local disk but is wiped when another user logs into the
+# machine; working clones kept there must be re-created on login. This
+# restores them the way the other bootstraps restore binaries: if the
+# checkout is gone, clone it again; if it's already there, leave it
+# alone — never pull, there may be uncommitted work.
+#
+# SSH clones run with BatchMode so a missing key/agent fails fast instead
+# of hanging the detached, TTY-less login hook on a passphrase prompt.
+# github.com's host key is accepted on first connect (accept-new) so a
+# fresh machine doesn't trip over an empty known_hosts.
+#
+# Usage:  repo-bootstrap <git-url> [dest-dir]
+#         dest-dir defaults to /goinfre/$USER/<repo-name>
+#
+# ─── Placement ───────────────────────────────────────────────────────────────
+# Clone → /goinfre/$USER/<repo-name>      volatile, re-cloned on next login
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+URL="${1:-}"
+[[ -z "$URL" ]] && { echo "usage: repo-bootstrap <git-url> [dest-dir]" >&2; exit 2; }
+
+NAME="$(basename "$URL" .git)"
+DEST="${2:-/goinfre/${USER}/${NAME}}"
+
+if [[ -e "$DEST" ]]; then
+    [[ -d "$DEST/.git" ]] && exit 0
+    echo "[repo-bootstrap] $DEST exists but is not a git repo — not touching it" >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "$DEST")"
+echo "[repo-bootstrap] cloning $URL -> $DEST"
+GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+    git clone "$URL" "$DEST"

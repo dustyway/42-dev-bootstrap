@@ -183,6 +183,21 @@ On a fresh machine using a self-hosted control server (Headscale), the first
 Plain `tailscale up` would register with the official Tailscale control plane
 instead. The URL is saved in the auth state, so it's needed only once.
 
+**`repo-bootstrap <git-url> [dest-dir]`**
+Re-clones a git repository onto `/goinfre` on login if it's missing
+(default destination: `/goinfre/$USER/<repo-name>`). Working clones on
+`/goinfre` get the fast local disk but vanish when another user logs into
+the machine; this restores them the way the other bootstraps restore
+binaries. If the checkout already exists it's left untouched — never
+pulled, since there may be uncommitted work. SSH clones run with
+`BatchMode` so a missing key/agent fails fast instead of hanging the
+detached login hook on a passphrase prompt. One `~/.zprofile` line per
+repo:
+
+```sh
+(nohup ~/Apps/bin/repo-bootstrap git@github.com:you/yourrepo.git &>/dev/null &)
+```
+
 **`jb-sync-elixir-sdk`**
 Rewrites every JetBrains product's `jdk.table.xml` so the `Elixir SDK` and
 `Erlang SDK for Elixir SDK` entries point at the current mise-managed
@@ -263,6 +278,8 @@ tool isn't in your config. Global npm packages live in
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Tailscale binaries on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
 | Tailscale auth state | ✅ (implicit) | Lives in `~/.config/tailscale/` on $HOME; survives /sgoinfre wipes |
+| Working clones on /goinfre | ✅ | `repo-bootstrap` re-clones on login |
+| Uncommitted work in those clones | ❌ | Volatile /goinfre — commit and push before logging out |
 | Project-specific settings (workspace/, history, recents) | ❌ | Not backed up — rebuild when you reopen the project |
 
 ## Possible future additions

@@ -28,6 +28,7 @@ install -m 0755 "$REPO_ROOT/bin/tailscale-bootstrap"       "$HOME/Apps/bin/tails
 install -m 0755 "$REPO_ROOT/bin/actionlint-bootstrap"      "$HOME/Apps/bin/actionlint-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/act-bootstrap"             "$HOME/Apps/bin/act-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/repo-bootstrap"            "$HOME/Apps/bin/repo-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
 install -m 0755 "$REPO_ROOT/bin/42-dev-install"            "$HOME/Apps/bin/42-dev-install"
 install -m 0755 "$REPO_ROOT/bin/42-dev-uninstall"          "$HOME/Apps/bin/42-dev-uninstall"
@@ -65,6 +66,7 @@ Then add a login-time hook to ~/.zprofile, e.g.:
   nohup \$HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/actionlint-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/act-bootstrap &>/dev/null & disown
+  nohup \$HOME/Apps/bin/repo-bootstrap git@github.com:you/yourrepo.git &>/dev/null & disown
 
 Adjust the JetBrains product code (IIU, WS, CL, …) and plugin list to taste.
 See README.md for the full list of supported products and plugin-spec syntax.
