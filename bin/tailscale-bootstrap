@@ -3,13 +3,16 @@
 # machines without root. Safe to run every login (idempotent).
 #
 # Uses Tailscale's userspace-networking mode (no kernel TUN, no sudo).
-# Traffic reaches the tailnet through a SOCKS5 proxy at 127.0.0.1:1055.
+# Traffic reaches the tailnet through a SOCKS5 proxy at 127.0.0.1:1055 or an
+# HTTP proxy at 127.0.0.1:1056. The HTTP proxy is needed by clients such as
+# OpenCode that do not support SOCKS proxy URLs.
 # The ~/bin/tailscale wrapper injects --socket so plain `tailscale up` works.
 # Auth state lives in ~/.config/tailscale/ ($HOME) — survives /sgoinfre wipes.
 #
 # Usage:  tailscale-bootstrap [VERSION]
 # Then:   tailscale up  (first time only, to authenticate)
 #         ALL_PROXY=socks5://127.0.0.1:1055 curl https://my-host.ts.net/
+#         HTTP_PROXY=http://127.0.0.1:1056 curl http://my-host.ts.net/
 #
 # ─── Placement ──────────────────────────────────────────────────────────────
 # App binaries   → $SGO/tailscale/<version>/bin/   persistent on sgoinfre
@@ -35,6 +38,7 @@ TARBALL="$SGO/.cache/${ASSET}"
 VERSION_MARKER="$APP_HOME/.tailscale-bootstrap-version"
 STATE_DIR="$HOME/.config/tailscale"
 SOCKET="/tmp/tailscale-${USER}.sock"
+HTTP_PROXY_ADDR="127.0.0.1:1056"
 
 mkdir -p "$(dirname "$TARBALL")" "$SGO/tailscale" "$STATE_DIR" "$HOME/bin"
 
@@ -77,22 +81,35 @@ cat > "$HOME/bin/tailscale-serve" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 LOG="/tmp/tailscale-\${USER}.log"
-if "$HOME/bin/tailscale" status >/dev/null 2>&1; then
+proxy_ready() {
+    (exec 3<>/dev/tcp/${HTTP_PROXY_ADDR/://}) 2>/dev/null
+}
+if "$HOME/bin/tailscale" status >/dev/null 2>&1 && proxy_ready; then
     echo "[tailscale-serve] already running"
     exit 0
+fi
+if "$HOME/bin/tailscale" status >/dev/null 2>&1; then
+    # Upgrade an older daemon started without the HTTP proxy. The cluster's
+    # system daemon is root-owned, so this targets only the user's daemon.
+    pkill -u "\$USER" -x tailscaled || true
+    for _ in \$(seq 1 20); do
+        "$HOME/bin/tailscale" status >/dev/null 2>&1 || break
+        sleep 0.1
+    done
 fi
 setsid "$HOME/bin/tailscaled" \\
     --tun=userspace-networking \\
     --socket="${SOCKET}" \\
     --state="${STATE_DIR}/tailscaled.state" \\
     --socks5-server=127.0.0.1:1055 \\
+    --outbound-http-proxy-listen="${HTTP_PROXY_ADDR}" \\
     >>"\$LOG" 2>&1 &
 disown
 for _ in \$(seq 1 20); do
     "$HOME/bin/tailscale" status >/dev/null 2>&1 && break
     sleep 0.5
 done
-echo "[tailscale-serve] started (SOCKS5: 127.0.0.1:1055, log: \$LOG)"
+echo "[tailscale-serve] started (SOCKS5: 127.0.0.1:1055, HTTP: ${HTTP_PROXY_ADDR}, log: \$LOG)"
 echo "[tailscale-serve] first time? run: tailscale up"
 EOF
 chmod +x "$HOME/bin/tailscale-serve"

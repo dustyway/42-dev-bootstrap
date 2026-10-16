@@ -175,10 +175,22 @@ Installs/enables OpenCode v2 through mise via
 Installs the [Tailscale](https://tailscale.com) VPN client without root using
 userspace-networking mode — no kernel TUN device, no routing-table changes.
 Traffic to the tailnet routes through a local SOCKS5 proxy at `127.0.0.1:1055`
-(`ALL_PROXY=socks5://127.0.0.1:1055`). The `~/bin/tailscale` wrapper
+(`ALL_PROXY=socks5://127.0.0.1:1055`) or an HTTP proxy at `127.0.0.1:1056`
+(`HTTP_PROXY=http://127.0.0.1:1056`) for clients that do not support SOCKS.
+The `~/bin/tailscale` wrapper
 auto-injects the non-default socket path so `tailscale up` / `tailscale status`
 work as-is. Auth state lives in `~/.config/tailscale/` (`$HOME`) — tiny,
 survives `/sgoinfre` wipes with no re-auth.
+OpenCode's background service can use the HTTP proxy persistently:
+
+```sh
+opencode service set env HTTP_PROXY http://127.0.0.1:1056
+opencode service set env HTTPS_PROXY http://127.0.0.1:1056
+opencode service set env NO_PROXY localhost,127.0.0.1,::1
+```
+
+After changing these settings, run `opencode service restart` and restart any
+OpenCode TUI that was already open.
 On a fresh machine using a self-hosted control server (Headscale), the first
 `tailscale up` must point at it: `tailscale up --login-server=https://headscale.example.com`.
 Plain `tailscale up` would register with the official Tailscale control plane
