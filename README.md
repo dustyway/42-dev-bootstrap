@@ -169,7 +169,9 @@ Installs/enables OpenCode v2 through mise via
 `/sgoinfre/mise-data/` instead of `$HOME`. This keeps OpenCode visible in
 `42-dev-install` while still letting `mise-bootstrap` restore it after a
 `/sgoinfre` wipe once it is in the global mise config. A leftover v1
-`github:anomalyco/opencode` entry is removed automatically.
+`github:anomalyco/opencode` entry is removed automatically. If `tailscale-bootstrap`
+has run, it also routes the background service through the Tailscale HTTP
+proxy (see below).
 
 **`tailscale-bootstrap`**
 Installs the [Tailscale](https://tailscale.com) VPN client without root using
@@ -181,7 +183,9 @@ The `~/bin/tailscale` wrapper
 auto-injects the non-default socket path so `tailscale up` / `tailscale status`
 work as-is. Auth state lives in `~/.config/tailscale/` (`$HOME`) — tiny,
 survives `/sgoinfre` wipes with no re-auth.
-OpenCode's background service can use the HTTP proxy persistently:
+`opencode-bootstrap` points OpenCode's background service at the HTTP proxy
+when Tailscale is installed (so tailnet providers like gx10 are reachable).
+To do it by hand:
 
 ```sh
 opencode service set env HTTP_PROXY http://127.0.0.1:1056

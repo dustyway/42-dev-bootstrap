@@ -56,8 +56,31 @@ if command -v opencode >/dev/null 2>&1 && ! opencode --version >/dev/null 2>&1; 
     mise install -f "$TOOL${VERSION:+@$VERSION}"
 fi
 
-if command -v opencode >/dev/null 2>&1; then
-    echo "[opencode-bootstrap] opencode ready: $(command -v opencode)"
-else
+if ! command -v opencode >/dev/null 2>&1; then
     echo "[opencode-bootstrap] installed, but mise shims are not on PATH yet — open a new shell." >&2
+    exit 0
+fi
+echo "[opencode-bootstrap] opencode ready: $(command -v opencode)"
+
+# Tailnet providers (e.g. gx10) are only reachable through tailscaled's
+# userspace proxy, and OpenCode can't use SOCKS — point its background service
+# at the HTTP proxy from tailscale-bootstrap. Only when Tailscale is installed:
+# with no daemon on :1056, every API call (cloud ones too) would fail.
+if [[ -x "$HOME/bin/tailscale-serve" ]]; then
+    proxy="http://127.0.0.1:1056"
+    current="$(opencode service get env 2>/dev/null || true)"
+    changed=0
+    for kv in "HTTP_PROXY=$proxy" "HTTPS_PROXY=$proxy" "NO_PROXY=localhost,127.0.0.1,::1"; do
+        name="${kv%%=*}" value="${kv#*=}"
+        grep -qF "\"$name\": \"$value\"" <<<"$current" && continue
+        opencode service set env "$name" "$value" >/dev/null
+        changed=1
+    done
+    if (( changed )); then
+        echo "[opencode-bootstrap] background service routed through Tailscale HTTP proxy ($proxy)"
+        if pgrep -u "$USER" -f 'opencode.* serve --service' >/dev/null; then
+            opencode service restart >/dev/null \
+                && echo "[opencode-bootstrap] restarted background service — restart any open OpenCode TUI too"
+        fi
+    fi
 fi
