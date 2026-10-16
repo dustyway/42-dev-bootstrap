@@ -164,11 +164,12 @@ for a fully-local coding loop:
 backend routes to your daemon automatically.
 
 **`opencode-bootstrap`**
-Installs/enables OpenCode through mise via
-`mise use -g github:anomalyco/opencode`, with binaries under
+Installs/enables OpenCode v2 through mise via
+`mise use -g npm:@opencode/cli`, with binaries under
 `/sgoinfre/mise-data/` instead of `$HOME`. This keeps OpenCode visible in
 `42-dev-install` while still letting `mise-bootstrap` restore it after a
-`/sgoinfre` wipe once it is in the global mise config.
+`/sgoinfre` wipe once it is in the global mise config. A leftover v1
+`github:anomalyco/opencode` entry is removed automatically.
 
 **`tailscale-bootstrap`**
 Installs the [Tailscale](https://tailscale.com) VPN client without root using

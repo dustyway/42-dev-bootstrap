@@ -1,21 +1,33 @@
 #!/usr/bin/env bash
 # opencode-bootstrap — install/heal OpenCode through mise.
 #
-# Why mise: OpenCode officially supports `mise use -g github:anomalyco/opencode`.
+# Why mise: OpenCode v2 ships as the npm package @opencode/cli (a native binary
+# pulled in via per-platform optional deps), installed with mise's npm backend.
+# v1 lived at github:anomalyco/opencode; that entry is dropped on migration.
+#
+# mise installs npm packages with lifecycle scripts disabled, which leaves a
+# stub `opencode` that only prints an error. The per-tool postinstall hook runs
+# the package's own postinstall.mjs (hard-links the matching platform binary
+# into place), then drops the other ~11 platform packages (~700 MB) from
+# /sgoinfre. The hook lives in config.toml, so mise-bootstrap restores work too.
+#
 # Keeping it in the global mise config means mise-bootstrap can restore it after
 # a sgoinfre wipe, while this script is the explicit opt-in entry point for the
 # installer TUI.
 #
 # Usage:  opencode-bootstrap [VERSION]
-#   default: track latest via github:anomalyco/opencode
-#   pinned:  write github:anomalyco/opencode@VERSION to global mise config
+#   default: track latest via npm:@opencode/cli
+#   pinned:  write npm:@opencode/cli@VERSION to global mise config
 
 set -euo pipefail
 
 VERSION="${1:-}"
-TOOL="github:anomalyco/opencode"
-SPEC="$TOOL"
-[[ -n "$VERSION" ]] && SPEC="${TOOL}@${VERSION}"
+TOOL="npm:@opencode/cli"
+LEGACY_TOOL="github:anomalyco/opencode"
+PKG='$MISE_TOOL_INSTALL_PATH/node_modules'
+HOOK="node $PKG/@opencode/cli/postinstall.mjs && rm -rf $PKG/.mise/@opencode+cli-*"
+SPEC="${TOOL}[postinstall=${HOOK}]"
+[[ -n "$VERSION" ]] && SPEC="${SPEC}@${VERSION}"
 
 export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
@@ -26,10 +38,23 @@ if ! command -v mise >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "[opencode-bootstrap] enabling OpenCode in global mise config: $SPEC"
+if grep -qF "\"$LEGACY_TOOL\"" "$HOME/.config/mise/config.toml" 2>/dev/null; then
+    echo "[opencode-bootstrap] removing v1 entry from global mise config: $LEGACY_TOOL"
+    mise use -g --remove "$LEGACY_TOOL"
+    rm -rf "$MISE_DATA_DIR/installs/github-anomalyco-opencode"
+fi
+
+echo "[opencode-bootstrap] enabling OpenCode in global mise config: $TOOL${VERSION:+@$VERSION}"
 mise use -g -y "$SPEC"
 
 eval "$(mise env -s bash)"
+
+# An install made before the hook existed still has the stub binary; mise sees
+# it as installed and skips the hook, so force a reinstall to heal it.
+if command -v opencode >/dev/null 2>&1 && ! opencode --version >/dev/null 2>&1; then
+    echo "[opencode-bootstrap] opencode binary is a stub — reinstalling to run the postinstall hook"
+    mise install -f "$TOOL${VERSION:+@$VERSION}"
+fi
 
 if command -v opencode >/dev/null 2>&1; then
     echo "[opencode-bootstrap] opencode ready: $(command -v opencode)"

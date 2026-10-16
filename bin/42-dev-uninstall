@@ -64,7 +64,7 @@ cleanup_globs_for() {
         graphviz)       printf '%s' "$SGO/graphviz:$SGO/.cache/graphviz-*" ;;
         inotify-tools)  printf '%s' "$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256" ;;
         aider)          printf '%s' "$SGO/uv-tools/aider-chat:$HOME/.local/share/uv/tools/aider-chat:$HOME/.local/bin/aider" ;;
-        opencode)       printf '%s' "$SGO/mise-data/installs/github-anomalyco-opencode:$SGO/mise-data/shims/opencode" ;;
+        opencode)       printf '%s' "$SGO/mise-data/installs/npm-opencode-cli:$SGO/mise-data/installs/github-anomalyco-opencode:$SGO/mise-data/shims/opencode" ;;
         jetbrains/*)    printf '%s:%s/.cache/jb-%s.tar.gz' "$SGO/$1" "$SGO" "${1#jetbrains/}" ;;
         *)              printf '%s' "$SGO/$1" ;;
     esac
@@ -410,7 +410,7 @@ post_uninstall_component() {
         opencode)
             if command -v mise >/dev/null 2>&1; then
                 MISE_DATA_DIR="$SGO/mise-data" MISE_CACHE_DIR="/goinfre/${USER}/mise-cache" \
-                    mise use -g --remove github:anomalyco/opencode >/dev/null 2>&1 \
+                    mise use -g --remove npm:@opencode/cli github:anomalyco/opencode >/dev/null 2>&1 \
                     && echo "[42-dev-uninstall] removed OpenCode from global mise config" \
                     || echo "[42-dev-uninstall] warning: failed to remove OpenCode from global mise config" >&2
             else
