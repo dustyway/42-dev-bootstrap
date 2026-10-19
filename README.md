@@ -47,7 +47,7 @@ extras to install — only sets up what's relevant to your config:
 |---|---|
 | `erlang` | Downloads wxWidgets 3.2 to `/sgoinfre` via `wx-bootstrap`; switches to the `asdf-erlang` plugin so kerl compiles Erlang from source with `--with-wx-config` pointing at that build. Without this, `:observer.start()` fails — the cluster machines have no `libwxgtk-dev` and the core mise backend ships a pre-built Erlang linked against wx 3.0 which isn't available. |
 | `erlang` or `elixir` | Appends a wx lib path to `~/.profile` (`LD_LIBRARY_PATH`) so `:observer` finds the shared libs in every future shell; appends a logger filter to `~/.iex.exs` that silences the cosmetic GTK3 style-context warnings wx emits on older distros. |
-| `elixir` | Installs `hex`, `rebar`, and `phx_new` archives for the active Elixir version (a version bump would otherwise prompt interactively on the next `mix deps.get`). |
+| `elixir` | Installs `hex`, `rebar`, and `phx_new` archives plus the `livebook` escript for the active Elixir version (a version bump would otherwise prompt interactively on the next `mix deps.get`, and drop `livebook` from `PATH`). |
 | `node` | Re-installs any global npm packages missing from `~/Apps/etc/npm-globals.txt`. |
 | `rust` | Exports `MISE_RUSTUP_HOME`/`MISE_CARGO_HOME` under `/sgoinfre` before `mise install`. The cluster's `/etc/zsh/zshenv` points `RUSTUP_HOME`/`CARGO_HOME` at root-owned `/opt/rust`, and `/opt/rust/bin` isn't on `PATH`, so apt's ancient `rustc 1.75` shadows the rustup toolchain. mise's rust backend installs via rustup into the user-owned homes and `mise activate` re-exports `RUSTUP_HOME`/`CARGO_HOME`, so `cargo install` and `rustup component add` work too. |
 
@@ -265,7 +265,7 @@ auto-detects which per-tool extras to apply.
 node = "24"       # → npm globals from ~/Apps/etc/npm-globals.txt
 go = "1.26.3"
 rust = { version = "1.99.1", components = "rust-src,rust-analyzer" } # needs MISE_RUSTUP_HOME/MISE_CARGO_HOME from shell/*.snippet
-elixir = "1.20.1-otp-29" # → hex / rebar / phx_new archives; IEx GTK filter
+elixir = "1.20.1-otp-29" # → hex / rebar / phx_new archives; livebook escript; IEx GTK filter
 erlang = "29.0.2"        # → wx 3.2 build; asdf-erlang source compile; LD_LIBRARY_PATH
 ```
 
