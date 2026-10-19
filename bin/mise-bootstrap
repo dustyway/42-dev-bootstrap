@@ -16,6 +16,13 @@ set -euo pipefail
 export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
 mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
+# Rust: the cluster's /etc/zsh/zshenv and /etc/profile.d/rust.sh point
+# RUSTUP_HOME/CARGO_HOME at root-owned /opt/rust (and /opt/rust/bin isn't on
+# PATH, so apt's rustc 1.75 shadows it). mise's rust backend would inherit
+# those paths and fail to write, so give it user-owned homes on sgoinfre.
+# `mise env`/`mise activate` then export RUSTUP_HOME/CARGO_HOME pointing here.
+export MISE_RUSTUP_HOME="/sgoinfre/goinfre/Perso/${USER}/rustup"
+export MISE_CARGO_HOME="/sgoinfre/goinfre/Perso/${USER}/cargo"
 
 # Returns 0 if the given tool is configured in any active mise config file.
 has_tool() { MISE_DATA_DIR="$MISE_DATA_DIR" mise current "$1" &>/dev/null; }

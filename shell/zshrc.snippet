@@ -5,6 +5,12 @@
 
 export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+# Rust toolchains + cargo registry on sgoinfre. The cluster sets
+# RUSTUP_HOME/CARGO_HOME to root-owned /opt/rust in /etc/zsh/zshenv; mise's
+# rust backend needs writable homes, and `mise activate` re-exports
+# RUSTUP_HOME/CARGO_HOME from these so cargo/rustup see the same dirs.
+export MISE_RUSTUP_HOME="/sgoinfre/goinfre/Perso/${USER}/rustup"
+export MISE_CARGO_HOME="/sgoinfre/goinfre/Perso/${USER}/cargo"
 eval "$(mise activate zsh)"
 
 # Start Tailscale userspace daemon (SOCKS5 on 127.0.0.1:1055).
