@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# ghidra-bootstrap — install/heal the Ghidra reverse-engineering suite on 42
+# cluster machines via the upstream NationalSecurityAgency/ghidra releases.
+# Safe to run every login (idempotent).
+#
+# Ghidra 12 needs a JDK 21, but the cluster only ships OpenJDK 17 (apt, no
+# sudo). So this also pulls a private Eclipse Temurin 21 JDK from
+# adoptium/temurin21-binaries and pins it via JAVA_HOME_OVERRIDE in Ghidra's
+# support/launch.properties — Ghidra's LaunchSupport would otherwise pick up
+# the system JDK 17 from PATH and refuse to start (or prompt for a path).
+#
+# Both downloads are sha256-verified: Temurin ships a .sha256.txt per asset;
+# Ghidra publishes the digest in its release notes and the GitHub asset
+# metadata. The default version's digest is pinned below; any other VERSION
+# is resolved via the GitHub API (asset name contains a build date we can't
+# derive from the version alone).
+#
+# User settings (~/.config/ghidra/, a few MB) and project files (wherever you
+# create them — put large ones on /sgoinfre) are not managed here; settings
+# live in $HOME and survive /sgoinfre wipes.
+#
+# Usage:  ghidra-bootstrap [VERSION]
+#
+# ─── Placement (same reasoning as emacs-/postgres-bootstrap) ────────────────
+# App            → $SGO/ghidra/<version>/                        ~900 MB
+# JDK 21         → $SGO/ghidra/jdk-<jdk-version>/                ~330 MB
+# Cached zip     → $SGO/.cache/ghidra_<version>.zip              ~500 MB, re-extract
+# Cached JDK     → $SGO/.cache/OpenJDK21U-jdk_x64_linux_…tar.gz  ~200 MB, re-extract
+# Launcher       → ~/bin/ghidra                                  wrapper, tiny
+# Headless       → ~/bin/ghidra-headless                         symlink to analyzeHeadless
+# Desktop entry  → ~/.local/share/applications/ghidra.desktop
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+DEFAULT_VERSION="12.1.4"
+DEFAULT_ASSET="ghidra_12.1.4_PUBLIC_20260921.zip"
+DEFAULT_SHA256="ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
+
+VERSION="${1:-$DEFAULT_VERSION}"
+RELEASE_TAG="Ghidra_${VERSION}_build"
+
+JDK_TAG="jdk-21.0.12.1+1"
+JDK_VERSION="21.0.12.1_1"
+JDK_ASSET="OpenJDK21U-jdk_x64_linux_hotspot_${JDK_VERSION}.tar.gz"
+JDK_URL="https://github.com/adoptium/temurin21-binaries/releases/download/${JDK_TAG/+/%2B}/${JDK_ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[ghidra-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/ghidra/${VERSION}"
+JDK_HOME="$SGO/ghidra/jdk-${JDK_VERSION}"
+ZIPFILE="$SGO/.cache/ghidra_${VERSION}.zip"
+ZIP_SHAFILE="$ZIPFILE.sha256"
+JDK_TARBALL="$SGO/.cache/${JDK_ASSET}"
+JDK_SHAFILE="$JDK_TARBALL.sha256.txt"
+VERSION_MARKER="$APP_HOME/.ghidra-bootstrap-version"
+JDK_MARKER="$JDK_HOME/.ghidra-bootstrap-version"
+
+mkdir -p "$SGO/.cache" "$SGO/ghidra"
+
+# 1. JDK 21 (Temurin).
+jdk_installed=""
+[[ -f "$JDK_MARKER" ]] && jdk_installed=$(cat "$JDK_MARKER")
+
+if [[ ! -x "$JDK_HOME/bin/java" || "$jdk_installed" != "$JDK_VERSION" ]]; then
+    if [[ ! -s "$JDK_TARBALL" ]]; then
+        echo "[ghidra-bootstrap] downloading $JDK_ASSET"
+        curl -fL --retry 3 -o "$JDK_TARBALL" "$JDK_URL"
+        curl -fsSL -o "$JDK_SHAFILE" "$JDK_URL.sha256.txt"
+        (cd "$(dirname "$JDK_TARBALL")" && sha256sum -c "$(basename "$JDK_SHAFILE")") \
+            || { echo "[ghidra-bootstrap] sha256 mismatch for $JDK_ASSET" >&2; rm -f "$JDK_TARBALL"; exit 1; }
+    fi
+    echo "[ghidra-bootstrap] installing Temurin $JDK_VERSION to $JDK_HOME"
+    rm -rf "$JDK_HOME.tmp" "$JDK_HOME"
+    mkdir -p "$JDK_HOME.tmp"
+    # Tarball top-level dir is jdk-21.x.y+z/; strip it.
+    tar -xzf "$JDK_TARBALL" -C "$JDK_HOME.tmp" --strip-components=1
+    mv "$JDK_HOME.tmp" "$JDK_HOME"
+    printf '%s' "$JDK_VERSION" > "$JDK_MARKER"
+fi
+
+# 2. Ghidra itself.
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/ghidraRun" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[ghidra-bootstrap] switching version: '$installed' -> '$VERSION'"
+    fi
+    if [[ ! -s "$ZIPFILE" ]]; then
+        if [[ "$VERSION" == "$DEFAULT_VERSION" ]]; then
+            asset="$DEFAULT_ASSET"
+            sha256="$DEFAULT_SHA256"
+        else
+            # Resolve the dated asset name + its sha256 digest from the release.
+            read -r asset sha256 < <(
+                curl -fsSL "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/tags/${RELEASE_TAG}" \
+                | python3 -I -c '
+import json, sys
+for a in json.load(sys.stdin)["assets"]:
+    if a["name"].endswith(".zip") and "_PUBLIC_" in a["name"]:
+        print(a["name"], (a.get("digest") or "").removeprefix("sha256:"))
+        break
+'
+            ) || true
+            [[ -n "${asset:-}" && -n "${sha256:-}" ]] \
+                || { echo "[ghidra-bootstrap] could not resolve release asset for $RELEASE_TAG" >&2; exit 1; }
+        fi
+        echo "[ghidra-bootstrap] downloading $asset"
+        curl -fL --retry 3 -o "$ZIPFILE" \
+            "https://github.com/NationalSecurityAgency/ghidra/releases/download/${RELEASE_TAG}/${asset}"
+        printf '%s  %s\n' "$sha256" "$(basename "$ZIPFILE")" > "$ZIP_SHAFILE"
+        (cd "$(dirname "$ZIPFILE")" && sha256sum -c "$(basename "$ZIP_SHAFILE")") \
+            || { echo "[ghidra-bootstrap] sha256 mismatch for $asset" >&2; rm -f "$ZIPFILE"; exit 1; }
+    fi
+    echo "[ghidra-bootstrap] installing Ghidra $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    # The zip contains a single top-level dir "ghidra_<v>_PUBLIC/" — strip it.
+    unzip -q "$ZIPFILE" -d "$APP_HOME.tmp"
+    topdir="$APP_HOME.tmp/ghidra_${VERSION}_PUBLIC"
+    [[ -d "$topdir" ]] || { echo "[ghidra-bootstrap] unexpected zip layout: no $topdir" >&2; exit 1; }
+    mv "$topdir"/* "$APP_HOME.tmp/"
+    rmdir "$topdir"
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+# 3. Pin the JDK. Rewritten every run so a JDK bump or sgoinfre path drift
+#    heals without a re-extract.
+props="$APP_HOME/support/launch.properties"
+if ! grep -qxF "JAVA_HOME_OVERRIDE=$JDK_HOME" "$props"; then
+    sed -i '/^JAVA_HOME_OVERRIDE=/d' "$props"
+    printf 'JAVA_HOME_OVERRIDE=%s\n' "$JDK_HOME" >> "$props"
+fi
+
+# 4. Launcher. A wrapper rather than a symlink: ghidraRun locates its install
+#    dir via readlink, but the bootstrap `java` it runs LaunchSupport with is
+#    taken from PATH (system JDK 17), so put the Temurin JDK first.
+mkdir -p "$HOME/bin"
+rm -f "$HOME/bin/ghidra"
+cat > "$HOME/bin/ghidra" <<WRAP
+#!/usr/bin/env bash
+export JAVA_HOME="$JDK_HOME"
+export PATH="\$JAVA_HOME/bin:\$PATH"
+exec "$APP_HOME/ghidraRun" "\$@"
+WRAP
+chmod 0755 "$HOME/bin/ghidra"
+# Headless analyzer resolves its install dir via readlink -f, so a plain
+# symlink works; JAVA_HOME_OVERRIDE covers the JDK.
+ln -sf "$APP_HOME/support/analyzeHeadless" "$HOME/bin/ghidra-headless"
+
+# 5. Desktop entry, same approach as jb-bootstrap (absolute paths, rewritten
+#    each run so sgoinfre path drift heals).
+desktop_dir="$HOME/.local/share/applications"
+mkdir -p "$desktop_dir"
+cat > "$desktop_dir/ghidra.desktop" <<DESK
+[Desktop Entry]
+Name=Ghidra
+GenericName=Reverse Engineering Suite
+Comment=Software reverse engineering framework
+Exec=$HOME/bin/ghidra
+Icon=$APP_HOME/support/ghidra.ico
+Type=Application
+Terminal=false
+Categories=Development;
+StartupNotify=true
+StartupWMClass=ghidra-Ghidra
+DESK
+command -v update-desktop-database >/dev/null 2>&1 \
+  && update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true

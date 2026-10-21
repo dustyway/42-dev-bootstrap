@@ -16,6 +16,7 @@ COMPONENTS=(
     "postgres|postgres-bootstrap|postgres|postgres-bootstrap|safe|PostgreSQL server binary (theseus-rs prebuilt) ~40 MB"
     "docker|docker-bootstrap|docker|docker-bootstrap|safe|Rootless Docker: data-root -> /goinfre, daemon.json healed in \$HOME (no sgoinfre payload)"
     "gh|gh-bootstrap|gh|gh-bootstrap|safe|GitHub CLI (cli/cli prebuilt) ~40 MB"
+    "ghidra|ghidra-bootstrap|ghidra|ghidra-bootstrap|safe|Ghidra reverse-engineering suite + private JDK 21 ~1.2 GB"
     "act|act-bootstrap|act|act-bootstrap|safe|Run GitHub Actions locally (nektos/act) ~20 MB"
     "actionlint|actionlint-bootstrap|actionlint|actionlint-bootstrap|safe|GitHub Actions workflow linter ~5 MB"
     "graphviz|graphviz-bootstrap|graphviz|graphviz-bootstrap|safe|graphviz dot/neato/fdp via apt-get download ~5 MB"

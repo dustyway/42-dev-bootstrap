@@ -131,6 +131,19 @@ upstream ships a glibc-only tarball that drops in cleanly. Auth tokens
 (`gh auth login`) live in `~/.config/gh/` on `$HOME`, so they survive
 `/sgoinfre` wipes — no re-auth on Sunday nights.
 
+**`ghidra-bootstrap [VERSION]`**
+Installs the [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
+reverse-engineering suite from the upstream release zip. Ghidra 12 needs
+JDK 21 but the cluster only has OpenJDK 17, so it also fetches a private
+Eclipse Temurin 21 JDK. Both are sha256-verified, both go under
+`/sgoinfre/ghidra/`, and the JDK is pinned via `JAVA_HOME_OVERRIDE` in
+Ghidra's `launch.properties`, so the system Java on `PATH` never gets picked.
+Adds `~/bin/ghidra` (GUI), `~/bin/ghidra-headless` (`analyzeHeadless`), and a
+`.desktop` launcher entry. User settings live in `~/.config/ghidra/` and
+survive `/sgoinfre` wipes. Projects go wherever you create them: put large
+ones on `/sgoinfre`, not `$HOME`. ~1.2 GB installed plus ~750 MB of cached
+downloads.
+
 **`graphviz-bootstrap`**
 Installs graphviz (`dot`, `neato`, `fdp`, …) without sudo via
 `apt-get download` + `dpkg-deb -x`, since mise has no plugin and a
@@ -290,6 +303,7 @@ tool isn't in your config. Global npm packages live in
 | clangd binary on /sgoinfre | ✅ | Re-extract from cached zip, else re-download from clangd/clangd Release |
 | gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
 | gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
+| Ghidra + JDK 21 on /sgoinfre | ✅ | Re-extract from cached zip/tarball, else re-download (sha256 verified) |
 | graphviz binaries on /sgoinfre | ✅ | Re-extract from cached .debs, else re-download via `apt-get download` |
 | ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
 | OpenCode binary on /sgoinfre | ✅ | `opencode-bootstrap` opts into mise; `mise-bootstrap` restores it from config.toml |

@@ -58,6 +58,7 @@ cleanup_globs_for() {
         wx)             printf '%s' "$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256" ;;
         tailscale)      printf '%s' "$SGO/tailscale:$SGO/.cache/tailscale_*.tgz" ;;
         gh)             printf '%s' "$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt" ;;
+        ghidra)         printf '%s' "$SGO/ghidra:$SGO/.cache/ghidra_*.zip:$SGO/.cache/ghidra_*.zip.sha256:$SGO/.cache/OpenJDK21U-jdk_*:$HOME/bin/ghidra:$HOME/bin/ghidra-headless:$HOME/.local/share/applications/ghidra.desktop" ;;
         postgres)       printf '%s' "$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256" ;;
         act)            printf '%s' "$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt" ;;
         actionlint)     printf '%s' "$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt" ;;
