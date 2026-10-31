@@ -20,6 +20,7 @@ install -m 0755 "$REPO_ROOT/bin/inotify-tools-bootstrap"   "$HOME/Apps/bin/inoti
 install -m 0755 "$REPO_ROOT/bin/clangd-bootstrap"          "$HOME/Apps/bin/clangd-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/gh-bootstrap"              "$HOME/Apps/bin/gh-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/ghidra-bootstrap"          "$HOME/Apps/bin/ghidra-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/ocaml-bootstrap"           "$HOME/Apps/bin/ocaml-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/graphviz-bootstrap"        "$HOME/Apps/bin/graphviz-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/ollama-bootstrap"          "$HOME/Apps/bin/ollama-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/aider-bootstrap"           "$HOME/Apps/bin/aider-bootstrap"
@@ -60,6 +61,7 @@ Then add a login-time hook to ~/.zprofile, e.g.:
   nohup \$HOME/Apps/bin/clangd-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/gh-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/ghidra-bootstrap &>/dev/null & disown
+  nohup \$HOME/Apps/bin/ocaml-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/graphviz-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/ollama-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/aider-bootstrap &>/dev/null & disown

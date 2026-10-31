@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# ocaml-bootstrap — install/heal an OCaml toolchain (compiler, ocamlfind, utop,
+# ocaml-lsp-server, dune) on 42 cluster machines. Safe to run every login
+# (idempotent).
+#
+# Pulls a tarball built by .github/workflows/build-ocaml.yml and published as
+# a GitHub release asset on this repo. apt's OCaml is 4.13 and needs sudo; the
+# tarball is an opam switch, but no opam is needed here. Adding a package means
+# changing the workflow and rebuilding.
+#
+# The toolchain records its absolute path at build time, so it only runs from
+# $SGO/ocaml/<version> with the $SGO the workflow built for. The check at the
+# end catches a mismatch rather than leaving a subtly broken install.
+#
+# Usage:  ocaml-bootstrap [VERSION]
+# Env override:  OCAML_BOOTSTRAP_REPO=owner/repo (defaults to dustyway/42-dev-bootstrap)
+#
+# ─── Placement (same reasoning as emacs-/postgres-bootstrap) ─────────────────
+# Toolchain       → $SGO/ocaml/<version>/         persistent on sgoinfre
+# Cached tarball  → $SGO/.cache/ocaml-<version>…  re-extract on wipe
+# Launchers       → ~/bin/ocaml*, utop, dune      symlinks; ocaml + utop are
+#                                                 wrappers (see below)
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-5.5.2}"
+REPO="${OCAML_BOOTSTRAP_REPO:-dustyway/42-dev-bootstrap}"
+ASSET="ocaml-${VERSION}-linux-x86_64.tar.gz"
+URL="https://github.com/${REPO}/releases/download/ocaml-${VERSION}/${ASSET}"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[ocaml-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/ocaml/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+SHAFILE="$SGO/.cache/${ASSET}.sha256"
+VERSION_MARKER="$APP_HOME/.ocaml-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/ocaml"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/bin/ocamlopt" || "$installed" != "$VERSION" ]]; then
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[ocaml-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        curl -fsSL -o "$SHAFILE" "${URL}.sha256"
+        (cd "$(dirname "$TARBALL")" && sha256sum -c "$(basename "$SHAFILE")") \
+            || { echo "[ocaml-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+    fi
+    echo "[ocaml-bootstrap] installing OCaml $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+where=$("$APP_HOME/bin/ocamlopt" -where)
+if [[ "$where" != "$APP_HOME/lib/ocaml" ]]; then
+    echo "[ocaml-bootstrap] built for $where, installed at $APP_HOME/lib/ocaml." >&2
+    echo "[ocaml-bootstrap] Update OCAML_ROOT in build-ocaml.yml and rebuild." >&2
+    exit 1
+fi
+
+mkdir -p "$HOME/bin"
+for tool in "$APP_HOME"/bin/ocaml* "$APP_HOME/bin/dune"; do
+    ln -sf "$tool" "$HOME/bin/$(basename "$tool")"
+done
+
+# The toplevels load C stubs and topfind from paths opam normally exports via
+# `opam env`. Set them here so `ocaml` and `utop` work without opam. rm first:
+# a plain redirect would follow an existing symlink into the toolchain.
+for tool in ocaml utop; do
+    rm -f "$HOME/bin/$tool"
+    cat > "$HOME/bin/$tool" <<EOF
+#!/bin/sh
+export CAML_LD_LIBRARY_PATH="$APP_HOME/lib/stublibs:$APP_HOME/lib/ocaml/stublibs"
+export OCAML_TOPLEVEL_PATH="$APP_HOME/lib/toplevel"
+exec "$APP_HOME/bin/$tool" "\$@"
+EOF
+    chmod +x "$HOME/bin/$tool"
+done
+
+echo "[ocaml-bootstrap] $("$HOME/bin/ocamlopt" -version) ready at $APP_HOME"

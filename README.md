@@ -131,6 +131,17 @@ upstream ships a glibc-only tarball that drops in cleanly. Auth tokens
 (`gh auth login`) live in `~/.config/gh/` on `$HOME`, so they survive
 `/sgoinfre` wipes — no re-auth on Sunday nights.
 
+**`ocaml-bootstrap [VERSION]`**
+Installs an OCaml 5 toolchain (compiler, `ocamlfind`, `utop`,
+`ocaml-lsp-server`, `dune`) from a tarball built by
+`.github/workflows/build-ocaml.yml`. apt's OCaml is 4.13 and needs sudo, and
+the tarball avoids a long opam build on NFS after each wipe. The toolchain
+records its absolute path, so the workflow builds it at the real
+`$SGO/ocaml/<version>` path; it only works for the login in `OCAML_ROOT`
+there. No opam on the cluster: adding a package means changing the workflow
+and rebuilding. `~/bin/ocaml` and `~/bin/utop` are wrappers that set the
+variables `opam env` would.
+
 **`ghidra-bootstrap [VERSION]`**
 Installs the [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
 reverse-engineering suite from the upstream release zip. Ghidra 12 needs
@@ -304,6 +315,7 @@ tool isn't in your config. Global npm packages live in
 | gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
 | gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
 | Ghidra + JDK 21 on /sgoinfre | ✅ | Re-extract from cached zip/tarball, else re-download (sha256 verified) |
+| OCaml toolchain on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release (sha256 verified) |
 | graphviz binaries on /sgoinfre | ✅ | Re-extract from cached .debs, else re-download via `apt-get download` |
 | ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
 | OpenCode binary on /sgoinfre | ✅ | `opencode-bootstrap` opts into mise; `mise-bootstrap` restores it from config.toml |
