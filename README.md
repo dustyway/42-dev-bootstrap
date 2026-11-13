@@ -225,6 +225,24 @@ On a fresh machine using a self-hosted control server (Headscale), the first
 Plain `tailscale up` would register with the official Tailscale control plane
 instead. The URL is saved in the auth state, so it's needed only once.
 
+**`tor-browser-bootstrap [VERSION]`**
+Installs [Tor Browser](https://www.torproject.org/) from the official
+tarball — no apt, no sudo, no system tor. Defaults to the latest stable
+release from Tor's update feed; the tarball comes from
+`archive.torproject.org` (keeps every release) and is sha256-verified against
+`sha256sums-signed-build.txt`. Extracts to `/sgoinfre/tor-browser/<version>/`,
+adds `~/bin/tor-browser` and a `.desktop` launcher. The built-in updater is
+turned off via `distribution/policies.json` (`DisableAppUpdate`), so the
+bootstrap is the updater; older versions and tarballs are removed after a
+switch. The profile lives inside the install dir and resets on a version
+bump — Tor Browser is amnesic by design. While it is open it also serves a
+Tor SOCKS5 proxy on `127.0.0.1:9150`, usable by other tools:
+
+```sh
+curl --socks5-hostname 127.0.0.1:9150 http://xxx.onion
+ssh -o ProxyCommand="nc -X 5 -x 127.0.0.1:9150 %h %p" -p 4242 user@xxx.onion
+```
+
 **`repo-bootstrap <git-url> [dest-dir]`**
 Re-clones a git repository onto `/goinfre` on login if it's missing
 (default destination: `/goinfre/$USER/<repo-name>`). Working clones on
@@ -273,6 +291,7 @@ nohup $HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & d
 nohup $HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
+nohup $HOME/Apps/bin/tor-browser-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/docker-bootstrap &>/dev/null & disown
 ```
 
@@ -322,6 +341,7 @@ tool isn't in your config. Global npm packages live in
 | Global npm packages | ✅ | Re-install from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Tailscale binaries on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
+| Tor Browser on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified); latest release picked up on login |
 | Tailscale auth state | ✅ (implicit) | Lives in `~/.config/tailscale/` on $HOME; survives /sgoinfre wipes |
 | Working clones on /goinfre | ✅ | `repo-bootstrap` re-clones on login |
 | Uncommitted work in those clones | ❌ | Volatile /goinfre — commit and push before logging out |
