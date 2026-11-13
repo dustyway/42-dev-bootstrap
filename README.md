@@ -243,6 +243,21 @@ curl --socks5-hostname 127.0.0.1:9150 http://xxx.onion
 ssh -o ProxyCommand="nc -X 5 -x 127.0.0.1:9150 %h %p" -p 4242 user@xxx.onion
 ```
 
+**`torsocks-bootstrap [VERSION]`** (optional, pairs with `tor-browser-bootstrap`)
+Installs [torsocks](https://gitlab.torproject.org/tpo/core/torsocks) the
+`graphviz-bootstrap` way: `apt-get download` + `dpkg-deb -x` into
+`/sgoinfre/torsocks/<version>/`, no sudo. torsocks is only a shim — it
+`LD_PRELOAD`s `libtorsocks.so` so a program's connections and DNS lookups go
+through a running Tor's SOCKS port; it brings no Tor of its own. The extracted
+script's hard-coded `/usr` prefix is rewritten, and its config points at
+`TorPort 9150`, so **Tor Browser must be open**. `~/bin/torsocks` sets
+`TORSOCKS_CONF_FILE`; override the port with `TORSOCKS_TOR_PORT=9050`.
+
+```sh
+torsocks ssh -p 4242 user@xxx.onion
+torsocks curl http://xxx.onion
+```
+
 **`repo-bootstrap <git-url> [dest-dir]`**
 Re-clones a git repository onto `/goinfre` on login if it's missing
 (default destination: `/goinfre/$USER/<repo-name>`). Working clones on
@@ -342,6 +357,7 @@ tool isn't in your config. Global npm packages live in
 | Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
 | Tailscale binaries on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
 | Tor Browser on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified); latest release picked up on login |
+| torsocks on /sgoinfre | ✅ | Re-extract from cached .deb, else re-download via `apt-get download` |
 | Tailscale auth state | ✅ (implicit) | Lives in `~/.config/tailscale/` on $HOME; survives /sgoinfre wipes |
 | Working clones on /goinfre | ✅ | `repo-bootstrap` re-clones on login |
 | Uncommitted work in those clones | ❌ | Volatile /goinfre — commit and push before logging out |

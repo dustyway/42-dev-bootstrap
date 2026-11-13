@@ -28,6 +28,7 @@ install -m 0755 "$REPO_ROOT/bin/opencode-bootstrap"        "$HOME/Apps/bin/openc
 install -m 0755 "$REPO_ROOT/bin/cuda-bootstrap"            "$HOME/Apps/bin/cuda-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/tailscale-bootstrap"       "$HOME/Apps/bin/tailscale-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/tor-browser-bootstrap"     "$HOME/Apps/bin/tor-browser-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/torsocks-bootstrap"        "$HOME/Apps/bin/torsocks-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/actionlint-bootstrap"      "$HOME/Apps/bin/actionlint-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/act-bootstrap"             "$HOME/Apps/bin/act-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-bootstrap"
@@ -70,6 +71,7 @@ Then add a login-time hook to ~/.zprofile, e.g.:
   nohup \$HOME/Apps/bin/cuda-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/tor-browser-bootstrap &>/dev/null & disown
+  nohup \$HOME/Apps/bin/torsocks-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/actionlint-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/act-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/repo-bootstrap git@github.com:you/yourrepo.git &>/dev/null & disown
