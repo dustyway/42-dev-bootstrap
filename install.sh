@@ -32,6 +32,7 @@ install -m 0755 "$REPO_ROOT/bin/torsocks-bootstrap"        "$HOME/Apps/bin/torso
 install -m 0755 "$REPO_ROOT/bin/actionlint-bootstrap"      "$HOME/Apps/bin/actionlint-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/act-bootstrap"             "$HOME/Apps/bin/act-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/glow-bootstrap"            "$HOME/Apps/bin/glow-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/repo-bootstrap"            "$HOME/Apps/bin/repo-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
 install -m 0755 "$REPO_ROOT/bin/42-dev-install"            "$HOME/Apps/bin/42-dev-install"
@@ -74,6 +75,7 @@ Then add a login-time hook to ~/.zprofile, e.g.:
   nohup \$HOME/Apps/bin/torsocks-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/actionlint-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/act-bootstrap &>/dev/null & disown
+  nohup \$HOME/Apps/bin/glow-bootstrap &>/dev/null & disown
   nohup \$HOME/Apps/bin/repo-bootstrap git@github.com:you/yourrepo.git &>/dev/null & disown
 
 Adjust the JetBrains product code (IIU, WS, CL, …) and plugin list to taste.

@@ -63,6 +63,7 @@ cleanup_globs_for() {
         ghidra)         printf '%s' "$SGO/ghidra:$SGO/.cache/ghidra_*.zip:$SGO/.cache/ghidra_*.zip.sha256:$SGO/.cache/OpenJDK21U-jdk_*:$HOME/bin/ghidra:$HOME/bin/ghidra-headless:$HOME/.local/share/applications/ghidra.desktop" ;;
         postgres)       printf '%s' "$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256" ;;
         act)            printf '%s' "$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt" ;;
+        glow)           printf '%s' "$SGO/glow:$SGO/.cache/glow_*.tar.gz:$SGO/.cache/glow_*_checksums.txt:$HOME/bin/glow" ;;
         actionlint)     printf '%s' "$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt" ;;
         graphviz)       printf '%s' "$SGO/graphviz:$SGO/.cache/graphviz-*" ;;
         inotify-tools)  printf '%s' "$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256" ;;

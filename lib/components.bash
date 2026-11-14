@@ -25,6 +25,7 @@ COMPONENTS=(
     "tailscale|tailscale-bootstrap|tailscale|tailscale-bootstrap|safe|Tailscale VPN client (userspace SOCKS5) ~60 MB"
     "tor-browser|tor-browser-bootstrap|tor-browser|tor-browser-bootstrap|safe|Tor Browser (+ Tor SOCKS5 on 127.0.0.1:9150 while open) ~400 MB"
     "torsocks|torsocks-bootstrap|torsocks|torsocks-bootstrap|safe|torsocks via apt-get download, pointed at Tor Browser (9150) <1 MB"
+    "glow|glow-bootstrap|glow|glow-bootstrap|safe|glow terminal Markdown renderer (charmbracelet/glow) ~20 MB"
     "fzf|fzf-bootstrap|fzf|fzf-bootstrap|safe|fzf fuzzy finder (junegunn/fzf) ~2 MB"
     "wx|wx-bootstrap|wx|wx-bootstrap|mise-bootstrap|safe|wxWidgets 3.2 for Erlang's :observer ~80 MB"
     "mise-data|mise-bootstrap|mise-data|mise-bootstrap|safe|mise runtimes (reads ~/.config/mise/config.toml) varies"

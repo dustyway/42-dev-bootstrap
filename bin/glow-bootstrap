@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# glow-bootstrap — install/heal glow (charmbracelet/glow, terminal Markdown
+# renderer) on 42 cluster machines from the upstream prebuilt releases.
+# Safe to run every login (idempotent).
+#
+# glow is not in jammy's apt; upstream ships a static Go binary that needs
+# nothing but the kernel. sha256-verified against the release's checksums.txt.
+#
+# Usage:  glow-bootstrap [VERSION]
+#
+# ─── Placement ───────────────────────────────────────────────────────────────
+# App binary     → $SGO/glow/<version>/glow            persistent on sgoinfre
+# Cached tarball → $SGO/.cache/glow_<v>_Linux_x86_64.tar.gz   ~10 MB
+# Launcher       → ~/bin/glow                          symlink, tiny
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+VERSION="${1:-3.0.0}"
+ASSET="glow_${VERSION}_Linux_x86_64.tar.gz"
+BASE_URL="https://github.com/charmbracelet/glow/releases/download/v${VERSION}"
+URL="${BASE_URL}/${ASSET}"
+CHECKSUMS_URL="${BASE_URL}/checksums.txt"
+
+SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
+[[ -z "$SGO" ]] && { echo "[glow-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
+
+APP_HOME="$SGO/glow/${VERSION}"
+TARBALL="$SGO/.cache/${ASSET}"
+SHAFILE="$SGO/.cache/glow_${VERSION}_checksums.txt"
+VERSION_MARKER="$APP_HOME/.glow-bootstrap-version"
+
+mkdir -p "$(dirname "$TARBALL")" "$SGO/glow"
+
+installed=""
+[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
+
+if [[ ! -x "$APP_HOME/glow" || "$installed" != "$VERSION" ]]; then
+    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
+        echo "[glow-bootstrap] switching version: '$installed' -> '$VERSION'"
+    fi
+    if [[ ! -s "$TARBALL" ]]; then
+        echo "[glow-bootstrap] downloading $ASSET"
+        curl -fL --retry 3 -o "$TARBALL" "$URL"
+        curl -fsSL -o "$SHAFILE" "$CHECKSUMS_URL"
+        # Anchored on the trailing name so the .sbom.json line doesn't match.
+        (cd "$(dirname "$TARBALL")" \
+            && grep "  ${ASSET}\$" "$(basename "$SHAFILE")" | sha256sum -c -) \
+            || { echo "[glow-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
+    fi
+    echo "[glow-bootstrap] installing glow $VERSION to $APP_HOME"
+    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+    mkdir -p "$APP_HOME.tmp"
+    # Tarball has a single top-level glow_<v>_Linux_x86_64/ directory.
+    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
+    mv "$APP_HOME.tmp" "$APP_HOME"
+    printf '%s' "$VERSION" > "$VERSION_MARKER"
+fi
+
+mkdir -p "$HOME/bin"
+ln -sf "$APP_HOME/glow" "$HOME/bin/glow"

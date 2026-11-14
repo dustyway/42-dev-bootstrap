@@ -131,6 +131,12 @@ upstream ships a glibc-only tarball that drops in cleanly. Auth tokens
 (`gh auth login`) live in `~/.config/gh/` on `$HOME`, so they survive
 `/sgoinfre` wipes — no re-auth on Sunday nights.
 
+**`glow-bootstrap [VERSION]`**
+Installs [glow](https://github.com/charmbracelet/glow), a terminal Markdown
+renderer/pager, from the upstream prebuilt releases (sha256-verified against
+`checksums.txt`). Not in jammy's apt; the static Go binary drops in cleanly.
+Extracts to `/sgoinfre/glow/<version>/` and symlinks `~/bin/glow`.
+
 **`ocaml-bootstrap [VERSION]`**
 Installs an OCaml 5 toolchain (compiler, `ocamlfind`, `utop`,
 `ocaml-lsp-server`, `dune`) from a tarball built by
@@ -347,6 +353,7 @@ tool isn't in your config. Global npm packages live in
 | inotify-tools binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
 | clangd binary on /sgoinfre | ✅ | Re-extract from cached zip, else re-download from clangd/clangd Release |
 | gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
+| glow binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
 | gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
 | Ghidra + JDK 21 on /sgoinfre | ✅ | Re-extract from cached zip/tarball, else re-download (sha256 verified) |
 | OCaml toolchain on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release (sha256 verified) |
