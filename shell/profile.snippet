@@ -12,10 +12,13 @@ export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
 # RUSTUP_HOME/CARGO_HOME from these so cargo/rustup see the same dirs.
 export MISE_RUSTUP_HOME="/sgoinfre/goinfre/Perso/${USER}/rustup"
 export MISE_CARGO_HOME="/sgoinfre/goinfre/Perso/${USER}/cargo"
-# Add mise shims to PATH so GUI-launched apps (JetBrains IDEs from the GNOME
-# launcher, etc.) see node/npm/mix/iex/etc. Interactive zsh gets these via
-# `mise activate` in ~/.zshrc; .desktop launchers don't source ~/.zshrc.
-export PATH="$PATH:$MISE_DATA_DIR/shims"
+# Put mise shims first in PATH so GUI-launched apps (JetBrains IDEs from the
+# GNOME launcher, etc.) get the same tools as an interactive shell, including
+# where mise overrides a system tool (e.g. g++/c++ from conda:gxx). Interactive
+# zsh gets these via `mise activate` in ~/.zshrc; .desktop launchers don't
+# source ~/.zshrc. Shim paths don't change across versions, so IDE settings
+# and CMake caches that record them survive upgrades.
+export PATH="$MISE_DATA_DIR/shims:$PATH"
 # uv tool venvs (aider, etc.) live on sgoinfre — Python deps are 200+ MB
 # each and would chew through the 5 GB $HOME quota.
 export UV_TOOL_DIR="/sgoinfre/goinfre/Perso/${USER}/uv-tools"
