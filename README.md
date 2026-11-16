@@ -154,9 +154,8 @@ GitHub Actions workflows, from the upstream releases. It isn't in apt.
 ### `act-bootstrap [VERSION]`
 
 Installs [act](https://github.com/nektos/act), which runs GitHub Actions
-workflows locally, from the upstream releases. act runs jobs in Docker
-containers, so full runs need a working Docker (see `docker-bootstrap`);
-`act --list` and `act --dryrun` work without it.
+workflows locally, from the upstream releases. Jobs run in containers on
+the cluster's rootless Docker (see `docker-bootstrap`).
 
 ### `cuda-bootstrap [CUDA_PKG_SUFFIX]`
 

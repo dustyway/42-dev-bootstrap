@@ -11,11 +11,8 @@
 # Why this exists: act is not in apt; the prebuilt binary is a single
 # static Go binary that needs nothing but the kernel.
 #
-# Note: act actually executes workflows by spawning Docker containers. The
-# 42 cluster has no Docker / rootless Podman (needs /etc/subuid + subgid,
-# which need root), so on the cluster this binary mainly enables --list /
-# --dryrun / graph inspection. Full workflow runs require a host with
-# Docker available.
+# act runs workflow jobs in Docker containers, using the cluster's rootless
+# Docker (see docker-bootstrap, which keeps its data-root on /goinfre).
 #
 # Usage:  act-bootstrap [VERSION]
 #
