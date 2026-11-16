@@ -120,21 +120,6 @@ apt's clangd 14, which rejects newer `.clang-format` keys such as
 built in, so formatting through the editor (e.g. `eglot-format-buffer`)
 works.
 
-### `gcc-bootstrap [VERSION]`
-
-Installs GCC (C and C++) from a tarball built by `build-gcc.yml`. The
-cluster's newest compiler is g++-12, whose standard library is missing most
-of C++23 (`<print>`, `std::ranges::to`, …).
-
-GCC is relocatable, so the tarball works from any path. Programs it builds
-need its newer `libstdc++`, so the bootstrap writes a `specs` file that adds
-`-rpath $SGO/gcc/<version>/lib64` to every link. They then run without
-`LD_LIBRARY_PATH`.
-
-Launchers are versioned (`~/bin/g++-16`, `gcc-16`, …). The system `cc` and
-`c++` stay the default, since graded 42 projects use them. Select the new
-compiler explicitly, e.g. `cmake -DCMAKE_CXX_COMPILER=g++-16`.
-
 ### `gh-bootstrap`
 
 Installs the GitHub CLI from the `cli/cli` releases. apt's `gh` lags behind
@@ -362,6 +347,15 @@ elixir = "1.20.1-otp-29" # hex / rebar / phx_new archives, livebook, IEx GTK fil
 erlang = "29.0.2"        # wx 3.2 build, Erlang compiled from source, LD_LIBRARY_PATH
 ```
 
+A current GCC comes from conda-forge through mise's `conda:` backend. The
+cluster's newest is g++-12, whose standard library lacks most of C++23.
+Programs it builds find the newer `libstdc++` through an rpath, without
+`LD_LIBRARY_PATH`:
+
+```toml
+"conda:gxx" = "16.2.0"   # g++ / c++
+```
+
 Extras are only set up for tools in the config. Global npm packages go in
 `~/Apps/etc/npm-globals.txt`, one per line.
 
@@ -380,7 +374,7 @@ there, otherwise downloaded again.
 | mise runtimes, OpenCode | yes | `mise install` from config.toml |
 | Global npm packages | yes | Reinstalled from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | not affected | Live in $HOME |
-| Emacs, PostgreSQL, inotify-tools, clangd, gh, glow, fzf, act, actionlint, GCC, OCaml, Ghidra + JDK, Tailscale, Tor Browser | yes | Reinstalled; GCC's specs file is rewritten |
+| Emacs, PostgreSQL, inotify-tools, clangd, gh, glow, fzf, act, actionlint, OCaml, Ghidra + JDK, Tailscale, Tor Browser | yes | Reinstalled |
 | graphviz, torsocks | yes | Reinstalled from cached .debs or `apt-get download` |
 | CUDA libraries | yes | Re-extracted from cached .debs, else downloaded from NVIDIA's repository |
 | ollama models | yes | Missing models from ollama-models.txt pulled again |
@@ -391,13 +385,6 @@ there, otherwise downloaded again.
 | Uncommitted work in those clones | no | Commit and push before logging out |
 
 ## Possible additions
-
-Planned:
-
-- `clang-bootstrap`: a current clang (with lld, clang-format, clang-tidy and
-  libc++), repackaged in CI from the official LLVM release, which is 1.2 GB
-  compressed. It would use GCC 16's `libstdc++` by default, so it needs
-  `gcc-bootstrap` working first.
 
 Would fit the same pattern:
 
