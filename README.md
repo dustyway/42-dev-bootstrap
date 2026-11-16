@@ -1,234 +1,267 @@
 # 42-dev-bootstrap
 
-Idempotent scripts to install JetBrains IDEs, Emacs, language runtimes, and
-related tooling on **42 school cluster machines** — where storage is split
-across three tiers with different persistence, size, and wipe rules. Designed
-to run on every login, do nothing when everything is already in place, and
-quietly heal the setup when sgoinfre gets wiped.
+Scripts that install JetBrains IDEs, Emacs, language runtimes and other tools
+on the 42 school cluster machines. They run on every login, do nothing if
+everything is in place, and reinstall whatever a storage wipe removed.
 
 ## Why
 
-The 42 cluster storage layout:
+The cluster has three storage locations with different rules:
 
 | Location | Size | Persistent | Speed | Notes |
 |---|---|---|---|---|
-| `$HOME` (iSCSI) | 5 GB (10 GB upgrade) | yes, everywhere | fast | **Hard quota** — over-limit blocks file creation and breaks apps. |
-| `/goinfre` | \~unlimited | no — wiped when another user logs in after you | fastest | Local disk. Per-machine. |
-| `/sgoinfre` (NFS) | 30 GB | yes, everywhere | slow | Sunday-night wipe if > 30 GB; 6-month-inactivity wipe. |
+| `$HOME` (iSCSI) | 5 GB (10 GB upgrade) | yes, on every machine | fast | Hard quota. Going over blocks file creation and breaks apps. |
+| `/goinfre` | ~unlimited | no, wiped when another user logs in after you | fastest | Local disk, per machine. |
+| `/sgoinfre` (NFS) | 30 GB | yes, on every machine | slow | Wiped Sunday night if over 30 GB, or after 6 months of inactivity. |
 
-Anything \~500 MB+ can't live in `$HOME` (quota) or `/goinfre` (volatile), so
-it has to live on `/sgoinfre` — which is the one that can vanish on Sunday
-night. These scripts encode the right placement per kind of file and
-re-bootstrap whatever was lost.
+Anything over ~500 MB can't go in `$HOME` (quota) or `/goinfre` (volatile), so
+it goes on `/sgoinfre`, which can still be wiped. Each script puts its files
+in the right place and reinstalls them when they disappear.
 
-## What you get
+Most scripts follow the same layout: the install goes to
+`/sgoinfre/<tool>/<version>/`, the downloaded archive is cached in
+`/sgoinfre/.cache/`, and launchers are symlinks in `~/bin`. Where upstream
+publishes checksums, downloads are verified against them.
 
-**`jb-bootstrap <PRODUCT_CODE>[@VERSION] [owner/repo[@tag] …]`**
-Installs a JetBrains IDE with caching and self-healing:
-- Binary + cached tarball → `/sgoinfre`, config → `/sgoinfre`, indexes/logs → `/goinfre`
-- `~/bin/<slug>` symlink launcher, under quota
-- `~/.local/share/applications/<slug>.desktop` so the IDE shows up in the
-  GNOME/Unity/KDE launcher with its real icon
-- Optional plugin installs from GitHub releases (marketplace often lags)
-- `<CODE>@VERSION` pins a specific IDE release; `owner/repo@tag` pins a plugin
-- Curated IDE-settings backup to `$HOME/Apps/etc/jetbrains-backup/` on every
-  login, restored if `/sgoinfre` was wiped
+## Scripts
 
-Supported product codes: `IIU IIC WS PS PCP PCC CL GO RM RD DG AC RR`
-(IntelliJ IDEA Ultimate/Community, WebStorm, PhpStorm, PyCharm Pro/Community,
-CLion, GoLand, RubyMine, Rider, DataGrip, Aqua, RustRover).
+### `jb-bootstrap <PRODUCT_CODE>[@VERSION] [owner/repo[@tag] …]`
 
-**`mise-bootstrap`**
-Restores mise-managed runtimes and per-tool extras after a `/sgoinfre` wipe.
-Reads tool pins from `~/.config/mise/config.toml` and auto-detects which
-extras to install — only sets up what's relevant to your config:
+Installs a JetBrains IDE.
 
-| Tool in config | What mise-bootstrap adds |
+- Binary, cached tarball and config go to `/sgoinfre`; indexes and logs go to
+  `/goinfre`.
+- Adds a `~/bin/<slug>` launcher and a `.desktop` entry with the IDE's icon.
+- Installs plugins from GitHub releases, since the marketplace often lags.
+- `<CODE>@VERSION` pins an IDE release; `owner/repo@tag` pins a plugin.
+- Backs up selected IDE settings to `$HOME/Apps/etc/jetbrains-backup/` on every
+  login and restores them after a `/sgoinfre` wipe.
+
+Product codes: `IIU IIC WS PS PCP PCC CL GO RM RD DG AC RR` (IntelliJ IDEA
+Ultimate/Community, WebStorm, PhpStorm, PyCharm Pro/Community, CLion, GoLand,
+RubyMine, Rider, DataGrip, Aqua, RustRover).
+
+### `mise-bootstrap`
+
+Reinstalls the runtimes pinned in `~/.config/mise/config.toml` and sets up
+extras for the tools it finds there:
+
+| Tool in config | Extra setup |
 |---|---|
-| `erlang` | Downloads wxWidgets 3.2 to `/sgoinfre` via `wx-bootstrap`; switches to the `asdf-erlang` plugin so kerl compiles Erlang from source with `--with-wx-config` pointing at that build. Without this, `:observer.start()` fails — the cluster machines have no `libwxgtk-dev` and the core mise backend ships a pre-built Erlang linked against wx 3.0 which isn't available. |
-| `erlang` or `elixir` | Appends a wx lib path to `~/.profile` (`LD_LIBRARY_PATH`) so `:observer` finds the shared libs in every future shell; appends a logger filter to `~/.iex.exs` that silences the cosmetic GTK3 style-context warnings wx emits on older distros. |
-| `elixir` | Installs `hex`, `rebar`, and `phx_new` archives plus the `livebook` escript for the active Elixir version (a version bump would otherwise prompt interactively on the next `mix deps.get`, and drop `livebook` from `PATH`). |
-| `node` | Re-installs any global npm packages missing from `~/Apps/etc/npm-globals.txt`. |
-| `rust` | Exports `MISE_RUSTUP_HOME`/`MISE_CARGO_HOME` under `/sgoinfre` before `mise install`. The cluster's `/etc/zsh/zshenv` points `RUSTUP_HOME`/`CARGO_HOME` at root-owned `/opt/rust`, and `/opt/rust/bin` isn't on `PATH`, so apt's ancient `rustc 1.75` shadows the rustup toolchain. mise's rust backend installs via rustup into the user-owned homes and `mise activate` re-exports `RUSTUP_HOME`/`CARGO_HOME`, so `cargo install` and `rustup component add` work too. |
+| `erlang` | Builds wxWidgets 3.2 on `/sgoinfre` (`wx-bootstrap`) and compiles Erlang from source against it with the `asdf-erlang` plugin. mise's default prebuilt Erlang links against wx 3.0, which the cluster doesn't have, so `:observer.start()` would fail. |
+| `erlang` or `elixir` | Adds the wx library path to `LD_LIBRARY_PATH` in `~/.profile`, and a logger filter to `~/.iex.exs` that hides harmless GTK3 style-context warnings. |
+| `elixir` | Installs the `hex`, `rebar` and `phx_new` archives and the `livebook` escript for the active Elixir version. Without this, a version bump makes the next `mix deps.get` prompt, and `livebook` drops off `PATH`. |
+| `node` | Reinstalls global npm packages listed in `~/Apps/etc/npm-globals.txt`. |
+| `rust` | Sets `MISE_RUSTUP_HOME` and `MISE_CARGO_HOME` under `/sgoinfre`. The cluster's `/etc/zsh/zshenv` points `RUSTUP_HOME` and `CARGO_HOME` at root-owned `/opt/rust`, which isn't on `PATH`, so apt's `rustc` 1.75 would win. `mise activate` exports the user-owned paths, so `cargo install` and `rustup component add` work. |
 
-Both `~/.profile` and `~/.iex.exs` edits are idempotent — keyed on marker
-comments, so re-runs are no-ops.
+The `~/.profile` and `~/.iex.exs` edits are marked with comments and only
+added once.
 
-**`emacs-bootstrap`**
-Installs a modern Emacs (tree-sitter + native-comp, GTK3/X11) from a tarball
-built by this repo's own GitHub Actions workflow and published as a Release
-asset. Downloads once, caches the tarball on `/sgoinfre/.cache/`, extracts
-to `/sgoinfre/emacs/<version>/`, symlinks `~/bin/emacs` + `~/bin/emacsclient`.
-No sudo, no system packages — the build toolchain runs on GitHub's Ubuntu
-runner; your cluster machine only downloads and extracts. Rebuild by pushing
-a new `emacs-<VERSION>` tag; `emacs-bootstrap VERSION` picks it up on next
-login.
+### `emacs-bootstrap [VERSION]`
 
-**`postgres-bootstrap`**
-Installs/heals a PostgreSQL server via theseus-rs's prebuilt, sha256-verified
-binaries. Avoids the apt-or-source bind (no sudo available; building from
-source needs bison + flex, which aren't in mise). Extracts to
-`/sgoinfre/postgres/<version>/` and symlinks every pg tool (`psql`, `pg_ctl`,
-`initdb`, …) into `~/bin`. `PGDATA` is per-project and **not** managed here —
-run `initdb -D /sgoinfre/.../<app>-pgdata` inside your app repo.
+Installs Emacs with tree-sitter and native compilation (GTK3/X11). The
+tarball is built by `.github/workflows/build-emacs.yml` and published as a
+release on this repo. To build a new version, push an `emacs-<VERSION>` tag.
 
-**`docker-bootstrap`**
-Repoints **rootless** Docker's data-root at `/goinfre/$USER/docker` and heals
-the config after a `/goinfre` wipe. Does *not* install Docker — it relies on
-the cluster's rootless Docker (the `docker` CLI + the `docker` systemd `--user`
-unit). Docker's data-root (images, volumes, containers — multiple GB) otherwise
-defaults to `~/.local/share/docker`, which lives in `$HOME` and burns through
-the 5 GB iSCSI quota (a fresh dev stack alone was 3.3 GB). `/goinfre` is local
-disk, ~unlimited and fastest — at the cost of being wiped on the next user's
-login, which is fine since images/volumes are reproducible (rebuild, re-pull,
-re-seed). `daemon.json` is kept as a **real file in `$HOME`** (`~/.config/docker`,
-replacing the old volatile `/goinfre` symlink if present): it's tiny, and being
-present on cold boot stops the `enabled` daemon from starting with the default
-root and rebuilding gigabytes back into the quota before the bootstrap runs.
-The script only restarts the daemon when the config changed or the live root is
-wrong, and never deletes the old `~/.local/share/docker` — so the switch is one
-config line to reverse (it prints the `rm -rf` to reclaim that quota when ready).
+### `postgres-bootstrap`
 
-**`docker-build`**
-A `docker buildx build` wrapper that keeps the BuildKit layer cache on
-`/sgoinfre` so a `/goinfre` wipe doesn't cost a full rebuild (recompiling
-native deps from a cold cache is the slow part). Since the
-data-root must stay on volatile `/goinfre` (overlayfs can't run on the NFS
-`/sgoinfre`), images and build cache are wiped with it — but BuildKit's
-`type=local` cache is just blob files, which *do* live fine on NFS. The wrapper
-stashes the cache at `$SGO/docker-buildcache` and re-imports it next build.
-`type=local` needs the `docker-container` builder driver (the default `docker`
-driver only does inline/registry cache); that builder is itself a container in
-the wiped data-root, so the wrapper recreates it on demand — the cache it pulls
-from persists on `/sgoinfre`. Use it exactly like `docker buildx build`:
+Installs a PostgreSQL server from theseus-rs's prebuilt binaries. apt needs
+sudo and a source build needs bison and flex. All pg tools (`psql`,
+`pg_ctl`, `initdb`, …) are linked into `~/bin`. Data directories are not
+managed: run `initdb -D /sgoinfre/.../<app>-pgdata` per project.
+
+### `docker-bootstrap`
+
+Moves rootless Docker's data-root to `/goinfre/$USER/docker`. It doesn't
+install Docker; it uses the cluster's `docker` CLI and systemd `--user` unit.
+
+By default the data-root is `~/.local/share/docker`, which fills the `$HOME`
+quota (one dev stack was 3.3 GB). On `/goinfre` it is wiped when another user
+logs in, which is acceptable because images and volumes can be rebuilt or
+pulled again.
+
+`daemon.json` is a regular file in `~/.config/docker` (an older version used a
+symlink to `/goinfre`, which gets replaced). It has to exist at boot, or the
+daemon starts with the default root and fills the quota before the bootstrap
+runs. The script restarts the daemon only when the config or the live root
+is wrong. It never deletes the old `~/.local/share/docker`; it prints the
+`rm -rf` command so you can do that yourself.
+
+### `docker-build`
+
+Wrapper for `docker buildx build` that keeps the BuildKit layer cache at
+`$SGO/docker-buildcache`, so a `/goinfre` wipe doesn't force a full rebuild.
+The data-root can't live on NFS (overlayfs), but the `type=local` cache is
+plain files and can.
+
+`type=local` needs the `docker-container` builder driver. That builder is a
+container in the data-root, so the wrapper recreates it when it's gone. Use
+it like `docker buildx build`:
+
 ```sh
 docker-build --push -t ghcr.io/<owner>/myapp:latest .
 ```
-Note: with the container driver the result isn't auto-loaded into `docker
-images` — pass `--load` or `--push` yourself. Registry-backed images
-(`docker compose pull`) survive a wipe on their own and need none of this.
 
-**`inotify-tools-bootstrap`**
-Installs `inotifywait` / `inotifywatch` — the file watchers Phoenix's
-`file_system` dep uses for dev live-reload. mise has no plugin, apt needs
-root, upstream ships no prebuilt tarball; this repo's
-`build-inotify-tools.yml` GitHub Actions workflow builds a static-linked
-tarball, and the bootstrap downloads + extracts it.
+With this driver the result isn't loaded into `docker images` automatically;
+pass `--load` or `--push`. Images pulled from a registry
+(`docker compose pull`) don't need this.
 
-**`clangd-bootstrap`**
-Installs a modern `clangd` (LSP server for C/C++) from the upstream
-`clangd/clangd` prebuilt releases. Shadows Ubuntu's apt clangd-14 via a
-`~/bin/clangd` symlink so Emacs's eglot gets a current binary with
-up-to-date `.clang-format` support (the apt build rejects clang-format 16+
-keys like `InsertNewlineAtEOF`). Ships `clangd` only — no standalone
-`clang-format` CLI, but clangd has libFormat built in, so
-`eglot-format-buffer` / on-type formatting read `~/.clang-format` correctly.
+### `inotify-tools-bootstrap`
 
-**`gh-bootstrap`**
-Installs the GitHub CLI (`gh`) from the upstream `cli/cli` prebuilt
-releases. apt's `gh` is usually a release behind and needs sudo anyway;
-upstream ships a glibc-only tarball that drops in cleanly. Auth tokens
-(`gh auth login`) live in `~/.config/gh/` on `$HOME`, so they survive
-`/sgoinfre` wipes — no re-auth on Sunday nights.
+Installs `inotifywait` and `inotifywatch`, which Phoenix's `file_system`
+dependency uses for live reload. There is no mise plugin or upstream binary,
+so `build-inotify-tools.yml` builds a static tarball.
 
-**`glow-bootstrap [VERSION]`**
+### `clangd-bootstrap`
+
+Installs `clangd` from the `clangd/clangd` releases. `~/bin/clangd` shadows
+apt's clangd 14, which rejects newer `.clang-format` keys such as
+`InsertNewlineAtEOF`. Only `clangd` is included, but it has clang-format
+built in, so formatting through the editor (e.g. `eglot-format-buffer`)
+works.
+
+### `gcc-bootstrap [VERSION]`
+
+Installs GCC (C and C++) from a tarball built by `build-gcc.yml`. The
+cluster's newest compiler is g++-12, whose standard library is missing most
+of C++23 (`<print>`, `std::ranges::to`, …).
+
+GCC is relocatable, so the tarball works from any path. Programs it builds
+need its newer `libstdc++`, so the bootstrap writes a `specs` file that adds
+`-rpath $SGO/gcc/<version>/lib64` to every link. They then run without
+`LD_LIBRARY_PATH`.
+
+Launchers are versioned (`~/bin/g++-16`, `gcc-16`, …). The system `cc` and
+`c++` stay the default, since graded 42 projects use them. Select the new
+compiler explicitly, e.g. `cmake -DCMAKE_CXX_COMPILER=g++-16`.
+
+### `gh-bootstrap`
+
+Installs the GitHub CLI from the `cli/cli` releases. apt's `gh` lags behind
+and needs sudo. Auth tokens live in `~/.config/gh/` and survive `/sgoinfre`
+wipes.
+
+### `fzf-bootstrap [VERSION]`
+
+Installs the [fzf](https://github.com/junegunn/fzf) fuzzy finder from the
+upstream releases and links `~/bin/fzf`.
+
+### `actionlint-bootstrap [VERSION]`
+
+Installs [actionlint](https://github.com/rhysd/actionlint), a linter for
+GitHub Actions workflows, from the upstream releases. It isn't in apt.
+
+### `act-bootstrap [VERSION]`
+
+Installs [act](https://github.com/nektos/act), which runs GitHub Actions
+workflows locally, from the upstream releases. act runs jobs in Docker
+containers, so full runs need a working Docker (see `docker-bootstrap`);
+`act --list` and `act --dryrun` work without it.
+
+### `cuda-bootstrap [CUDA_PKG_SUFFIX]`
+
+Installs CUDA 12, cuDNN 9 and NCCL 2 libraries without sudo, for GPU
+EXLA (Nx/Axon). Downloads the packages from NVIDIA's Ubuntu 22.04 repository
+and extracts them to `$SGO/cuda/`. The cached packages take about 2.5 GB.
+
+The default is CUDA 12.9 (`12-9`), which matches XLA's `nvrtc-builtins`
+library; pass e.g. `12-8` for another minor version. `libxla_extension.so`
+requires three NVSHMEM libraries that single-GPU work never calls, so the
+script builds empty stubs with the right names. It adds `LD_LIBRARY_PATH`,
+`PATH` and `XLA_FLAGS` to `~/.profile` once. Afterwards, recompile EXLA in
+your project:
+
+```sh
+XLA_TARGET=cuda12 mix deps.compile exla --force
+```
+
+### `glow-bootstrap [VERSION]`
+
 Installs [glow](https://github.com/charmbracelet/glow), a terminal Markdown
-renderer/pager, from the upstream prebuilt releases (sha256-verified against
-`checksums.txt`). Not in jammy's apt; the static Go binary drops in cleanly.
-Extracts to `/sgoinfre/glow/<version>/` and symlinks `~/bin/glow`.
+viewer, from the upstream releases. It isn't in Ubuntu 22.04's apt.
 
-**`ocaml-bootstrap [VERSION]`**
-Installs an OCaml 5 toolchain (compiler, `ocamlfind`, `utop`,
-`ocaml-lsp-server`, `dune`) from a tarball built by
-`.github/workflows/build-ocaml.yml`. apt's OCaml is 4.13 and needs sudo, and
-the tarball avoids a long opam build on NFS after each wipe. The toolchain
-records its absolute path, so the workflow builds it at the real
-`$SGO/ocaml/<version>` path; it only works for the login in `OCAML_ROOT`
-there. No opam on the cluster: adding a package means changing the workflow
-and rebuilding. `~/bin/ocaml` and `~/bin/utop` are wrappers that set the
-variables `opam env` would.
+### `ocaml-bootstrap [VERSION]`
 
-**`gcc-bootstrap [VERSION]`**
-Installs a current GCC (C and C++) from a tarball built by
-`.github/workflows/build-gcc.yml`. The cluster's newest is g++-12, whose
-libstdc++ lacks most of the C++23 library (`<print>`, `std::ranges::to`, …);
-a newer clang wouldn't help, since it uses that same libstdc++. GCC is
-relocatable, so the tarball works from any path. On install, a `specs` file
-adds `-rpath $SGO/gcc/<version>/lib64` to every link, so built programs find
-the new libstdc++ without `LD_LIBRARY_PATH`. Launchers are versioned only
-(`~/bin/g++-16`, `gcc-16`, …) so the system `cc`/`c++` used for graded 42
-projects is untouched; select it explicitly, e.g.
-`cmake -DCMAKE_CXX_COMPILER=g++-16`.
+Installs OCaml 5 with `ocamlfind`, `utop`, `ocaml-lsp-server` and `dune` from
+a tarball built by `build-ocaml.yml`. apt's OCaml is 4.13, and building with
+opam on NFS after each wipe would be slow.
 
-**`ghidra-bootstrap [VERSION]`**
-Installs the [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
-reverse-engineering suite from the upstream release zip. Ghidra 12 needs
-JDK 21 but the cluster only has OpenJDK 17, so it also fetches a private
-Eclipse Temurin 21 JDK. Both are sha256-verified, both go under
-`/sgoinfre/ghidra/`, and the JDK is pinned via `JAVA_HOME_OVERRIDE` in
-Ghidra's `launch.properties`, so the system Java on `PATH` never gets picked.
-Adds `~/bin/ghidra` (GUI), `~/bin/ghidra-headless` (`analyzeHeadless`), and a
-`.desktop` launcher entry. User settings live in `~/.config/ghidra/` and
-survive `/sgoinfre` wipes. Projects go wherever you create them: put large
-ones on `/sgoinfre`, not `$HOME`. ~1.2 GB installed plus ~750 MB of cached
+An OCaml install records its own absolute path, so the workflow builds it at
+the real `$SGO/ocaml/<version>` path. It only works for the login set in
+`OCAML_ROOT`. There is no opam on the cluster: adding a package means editing
+the workflow and rebuilding. `~/bin/ocaml` and `~/bin/utop` are wrappers that
+set the variables `opam env` would.
+
+### `ghidra-bootstrap [VERSION]`
+
+Installs [Ghidra](https://github.com/NationalSecurityAgency/ghidra). Ghidra 12
+needs JDK 21 and the cluster has 17, so the script also installs a private
+Temurin 21 JDK under `/sgoinfre/ghidra/` and sets `JAVA_HOME_OVERRIDE` in
+Ghidra's `launch.properties`.
+
+Adds `~/bin/ghidra` (GUI), `~/bin/ghidra-headless` (`analyzeHeadless`) and a
+`.desktop` entry. Settings live in `~/.config/ghidra/`. Keep large projects on
+`/sgoinfre`, not `$HOME`. Uses about 1.2 GB installed plus 750 MB of cached
 downloads.
 
-**`graphviz-bootstrap`**
-Installs graphviz (`dot`, `neato`, `fdp`, …) without sudo via
-`apt-get download` + `dpkg-deb -x`, since mise has no plugin and a
-source build pulls in cairo/pango/libpng/freetype. Extracts the jammy
-.debs into `/sgoinfre/graphviz/<version>/`, regenerates `config6` (the
-plugin registry that `dot -c` writes post-install — not shipped in the
-.deb), and drops wrapper scripts into `~/bin` that set
-`LD_LIBRARY_PATH` and `GVBINDIR` to the non-standard prefix. Plugins
-dlopen cairo/pango from the system at runtime, so PNG/SVG/PDF output
-all work.
+### `graphviz-bootstrap`
 
-**`ollama-bootstrap`**
-Manages a user-private ollama setup that lives alongside the cluster's
-apt-installed daemon. Doesn't install a binary — uses `/bin/ollama` —
-but runs a *second* daemon under your account on port `11435` (set
-`OLLAMA_HOST=127.0.0.1:11435` per `profile.snippet`), pointed at
-`/sgoinfre/ollama/models` via `OLLAMA_MODELS`. Drops a `~/bin/ollama-serve`
-launcher (idempotent) and re-pulls anything in `~/Apps/etc/ollama-models.txt`
-that's missing on next login, so a Sunday-night `/sgoinfre` wipe
-self-heals. Default model: `qwen2.5-coder:7b` — strongest small open
-coding model that fits sgoinfre with headroom.
+Installs graphviz (`dot`, `neato`, `fdp`, …) without sudo by extracting the
+Ubuntu packages with `apt-get download` and `dpkg-deb -x`. A source build
+would need cairo, pango, libpng and freetype.
 
-**`aider-bootstrap`**
-Installs aider (terminal pair-programmer) as a `uv tool`, with the
-~200–500 MB Python venv on `/sgoinfre/uv-tools/` (via `UV_TOOL_DIR`)
-so it doesn't eat the 5 GB `$HOME` quota — only the `~/.local/bin/aider`
-shim sits in `$HOME`. Self-healing across `/sgoinfre` wipes: re-runs
-`uv tool install` when the venv is gone. Pair with `ollama-bootstrap`
-for a fully-local coding loop:
-`aider --model ollama_chat/qwen2.5-coder:7b --edit-format whole`.
-`OLLAMA_API_BASE` is exported in `profile.snippet` so aider's LiteLLM
-backend routes to your daemon automatically.
+The script also generates `config6`, the plugin registry that `dot -c`
+normally writes after install. The `~/bin` wrappers set `LD_LIBRARY_PATH` and
+`GVBINDIR`. Plugins load the system's cairo and pango, so PNG, SVG and PDF
+output work.
 
-**`opencode-bootstrap`**
-Installs/enables OpenCode v2 through mise via
-`mise use -g npm:@opencode/cli`, with binaries under
-`/sgoinfre/mise-data/` instead of `$HOME`. This keeps OpenCode visible in
-`42-dev-install` while still letting `mise-bootstrap` restore it after a
-`/sgoinfre` wipe once it is in the global mise config. A leftover v1
-`github:anomalyco/opencode` entry is removed automatically. If `tailscale-bootstrap`
-has run, it also routes the background service through the Tailscale HTTP
-proxy (see below).
+### `ollama-bootstrap`
 
-**`tailscale-bootstrap`**
-Installs the [Tailscale](https://tailscale.com) VPN client without root using
-userspace-networking mode — no kernel TUN device, no routing-table changes.
-Traffic to the tailnet routes through a local SOCKS5 proxy at `127.0.0.1:1055`
-(`ALL_PROXY=socks5://127.0.0.1:1055`) or an HTTP proxy at `127.0.0.1:1056`
-(`HTTP_PROXY=http://127.0.0.1:1056`) for clients that do not support SOCKS.
-The `~/bin/tailscale` wrapper
-auto-injects the non-default socket path so `tailscale up` / `tailscale status`
-work as-is. Auth state lives in `~/.config/tailscale/` (`$HOME`) — tiny,
-survives `/sgoinfre` wipes with no re-auth.
-`opencode-bootstrap` points OpenCode's background service at the HTTP proxy
-when Tailscale is installed (so tailnet providers like gx10 are reachable).
-To do it by hand:
+Runs a second ollama daemon under your account, next to the cluster's
+system daemon. It uses the system `/bin/ollama`, listens on port 11435
+(`OLLAMA_HOST` is set in `profile.snippet`), and stores models in
+`/sgoinfre/ollama/models`. Adds a `~/bin/ollama-serve` launcher and pulls any
+model listed in `~/Apps/etc/ollama-models.txt` that is missing. The default
+model is `qwen2.5-coder:7b`.
+
+### `aider-bootstrap`
+
+Installs aider with `uv tool`. The Python environment (200–500 MB) goes in
+`/sgoinfre/uv-tools/` via `UV_TOOL_DIR`; only the `~/.local/bin/aider` shim is
+in `$HOME`. Reinstalls when the environment is gone.
+
+With `ollama-bootstrap` it can run fully locally:
+
+```sh
+aider --model ollama_chat/qwen2.5-coder:7b --edit-format whole
+```
+
+`profile.snippet` sets `OLLAMA_API_BASE` so aider finds your daemon.
+
+### `opencode-bootstrap`
+
+Installs OpenCode v2 through mise (`mise use -g npm:@opencode/cli`), with the
+binaries under `/sgoinfre/mise-data/`. It is listed separately in
+`42-dev-install`, but `mise-bootstrap` restores it after a wipe. Removes a
+leftover v1 `github:anomalyco/opencode` entry. If Tailscale is installed, it
+routes OpenCode's background service through the Tailscale HTTP proxy.
+
+### `tailscale-bootstrap`
+
+Installs the [Tailscale](https://tailscale.com) client without root, in
+userspace-networking mode (no TUN device or routing changes). Tailnet traffic
+goes through a SOCKS5 proxy on `127.0.0.1:1055`
+(`ALL_PROXY=socks5://127.0.0.1:1055`) or an HTTP proxy on `127.0.0.1:1056`
+(`HTTP_PROXY=http://127.0.0.1:1056`) for clients without SOCKS support. The
+`~/bin/tailscale` wrapper passes the socket path, so `tailscale up` and
+`tailscale status` work unchanged. Auth state lives in `~/.config/tailscale/`.
+
+With a self-hosted control server (Headscale), the first `tailscale up` on a
+machine needs `--login-server=https://headscale.example.com`; otherwise it
+registers with Tailscale's own servers. The URL is stored in the auth state
+after that.
+
+To point OpenCode at the proxy by hand:
 
 ```sh
 opencode service set env HTTP_PROXY http://127.0.0.1:1056
@@ -236,68 +269,58 @@ opencode service set env HTTPS_PROXY http://127.0.0.1:1056
 opencode service set env NO_PROXY localhost,127.0.0.1,::1
 ```
 
-After changing these settings, run `opencode service restart` and restart any
-OpenCode TUI that was already open.
-On a fresh machine using a self-hosted control server (Headscale), the first
-`tailscale up` must point at it: `tailscale up --login-server=https://headscale.example.com`.
-Plain `tailscale up` would register with the official Tailscale control plane
-instead. The URL is saved in the auth state, so it's needed only once.
+Then run `opencode service restart` and restart any open OpenCode TUI.
 
-**`tor-browser-bootstrap [VERSION]`**
+### `tor-browser-bootstrap [VERSION]`
+
 Installs [Tor Browser](https://www.torproject.org/) from the official
-tarball — no apt, no sudo, no system tor. Defaults to the latest stable
-release from Tor's update feed; the tarball comes from
-`archive.torproject.org` (keeps every release) and is sha256-verified against
-`sha256sums-signed-build.txt`. Extracts to `/sgoinfre/tor-browser/<version>/`,
-adds `~/bin/tor-browser` and a `.desktop` launcher. The built-in updater is
-turned off via `distribution/policies.json` (`DisableAppUpdate`), so the
-bootstrap is the updater; older versions and tarballs are removed after a
-switch. The profile lives inside the install dir and resets on a version
-bump — Tor Browser is amnesic by design. While it is open it also serves a
-Tor SOCKS5 proxy on `127.0.0.1:9150`, usable by other tools:
+tarball. Defaults to the latest stable release from Tor's update feed and
+downloads from `archive.torproject.org`, verified against
+`sha256sums-signed-build.txt`. Adds `~/bin/tor-browser` and a `.desktop`
+entry.
+
+The built-in updater is disabled in `distribution/policies.json`; rerunning
+the bootstrap updates instead, and removes old versions. The profile lives in
+the install directory, so it resets on each version change. While open, Tor
+Browser serves a SOCKS5 proxy on `127.0.0.1:9150` that other tools can use:
 
 ```sh
 curl --socks5-hostname 127.0.0.1:9150 http://xxx.onion
 ssh -o ProxyCommand="nc -X 5 -x 127.0.0.1:9150 %h %p" -p 4242 user@xxx.onion
 ```
 
-**`torsocks-bootstrap [VERSION]`** (optional, pairs with `tor-browser-bootstrap`)
-Installs [torsocks](https://gitlab.torproject.org/tpo/core/torsocks) the
-`graphviz-bootstrap` way: `apt-get download` + `dpkg-deb -x` into
-`/sgoinfre/torsocks/<version>/`, no sudo. torsocks is only a shim — it
-`LD_PRELOAD`s `libtorsocks.so` so a program's connections and DNS lookups go
-through a running Tor's SOCKS port; it brings no Tor of its own. The extracted
-script's hard-coded `/usr` prefix is rewritten, and its config points at
-`TorPort 9150`, so **Tor Browser must be open**. `~/bin/torsocks` sets
-`TORSOCKS_CONF_FILE`; override the port with `TORSOCKS_TOR_PORT=9050`.
+### `torsocks-bootstrap [VERSION]`
+
+Installs [torsocks](https://gitlab.torproject.org/tpo/core/torsocks) the same
+way as graphviz. torsocks preloads `libtorsocks.so` so a program's
+connections and DNS lookups go through Tor's SOCKS port. It doesn't include
+Tor itself: it is configured for port 9150, so Tor Browser must be open.
+`~/bin/torsocks` sets `TORSOCKS_CONF_FILE`; use `TORSOCKS_TOR_PORT=9050` for
+another port.
 
 ```sh
 torsocks ssh -p 4242 user@xxx.onion
 torsocks curl http://xxx.onion
 ```
 
-**`repo-bootstrap <git-url> [dest-dir]`**
-Re-clones a git repository onto `/goinfre` on login if it's missing
-(default destination: `/goinfre/$USER/<repo-name>`). Working clones on
-`/goinfre` get the fast local disk but vanish when another user logs into
-the machine; this restores them the way the other bootstraps restore
-binaries. If the checkout already exists it's left untouched — never
-pulled, since there may be uncommitted work. SSH clones run with
-`BatchMode` so a missing key/agent fails fast instead of hanging the
-detached login hook on a passphrase prompt. One `~/.zprofile` line per
-repo:
+### `repo-bootstrap <git-url> [dest-dir]`
+
+Clones a repository onto `/goinfre` on login if it's missing (default
+`/goinfre/$USER/<repo-name>`). An existing checkout is left alone and never
+pulled, since it may have uncommitted work. SSH clones use `BatchMode`, so a
+missing key fails instead of waiting for a passphrase. One `~/.zprofile` line
+per repository:
 
 ```sh
 (nohup ~/Apps/bin/repo-bootstrap git@github.com:you/yourrepo.git &>/dev/null &)
 ```
 
-**`jb-sync-elixir-sdk`**
-Rewrites every JetBrains product's `jdk.table.xml` so the `Elixir SDK` and
-`Erlang SDK for Elixir SDK` entries point at the current mise-managed
-install paths. Runs at the end of `mise-bootstrap` (catches version bumps)
-and `jb-bootstrap` (catches SDK-containing XML restored from backup).
-Without this, a `mise use --global elixir@…` upgrade leaves the IDE
-pointing at a path that may not exist after a /sgoinfre wipe.
+### `jb-sync-elixir-sdk`
+
+Updates every JetBrains product's `jdk.table.xml` so the `Elixir SDK` and
+`Erlang SDK for Elixir SDK` entries point at the current mise install paths.
+Runs at the end of `mise-bootstrap` and `jb-bootstrap`. Without it, an Elixir
+upgrade leaves the IDE pointing at a path that may no longer exist.
 
 ## Install
 
@@ -307,17 +330,15 @@ cd ~/Code/42-dev-bootstrap
 ./install.sh
 ```
 
-Then paste the snippets into your rc files:
+Append the shell snippets:
 
 ```sh
-# append to ~/.profile
 cat shell/profile.snippet >> ~/.profile
-
-# append to ~/.zshrc
 cat shell/zshrc.snippet >> ~/.zshrc
 ```
 
-Finally, add a login-time hook in `~/.zprofile`. Example:
+Add the bootstraps you want to `~/.zprofile`. They run in the background so
+login isn't blocked:
 
 ```sh
 nohup $HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & disown
@@ -328,86 +349,70 @@ nohup $HOME/Apps/bin/tor-browser-bootstrap &>/dev/null & disown
 nohup $HOME/Apps/bin/docker-bootstrap &>/dev/null & disown
 ```
 
-Backgrounded so they don't block the login.
+## mise runtimes
 
-## mise runtime pinning
-
-Declare runtimes in `~/.config/mise/config.toml` (or via `mise use --global`).
-`mise-bootstrap` reads this on login, reinstalls anything missing, and
-auto-detects which per-tool extras to apply.
+Pin runtimes in `~/.config/mise/config.toml` (or with `mise use --global`).
+`mise-bootstrap` reads it on login and installs whatever is missing.
 
 ```toml
 [tools]
-node = "24"       # → npm globals from ~/Apps/etc/npm-globals.txt
+node = "24"       # npm globals from ~/Apps/etc/npm-globals.txt
 go = "1.26.3"
 rust = { version = "1.99.1", components = "rust-src,rust-analyzer" } # needs MISE_RUSTUP_HOME/MISE_CARGO_HOME from shell/*.snippet
-elixir = "1.20.1-otp-29" # → hex / rebar / phx_new archives; livebook escript; IEx GTK filter
-erlang = "29.0.2"        # → wx 3.2 build; asdf-erlang source compile; LD_LIBRARY_PATH
+elixir = "1.20.1-otp-29" # hex / rebar / phx_new archives, livebook, IEx GTK filter
+erlang = "29.0.2"        # wx 3.2 build, Erlang compiled from source, LD_LIBRARY_PATH
 ```
 
-Only add the tools you actually use — the bootstrap skips every section whose
-tool isn't in your config. Global npm packages live in
+Extras are only set up for tools in the config. Global npm packages go in
 `~/Apps/etc/npm-globals.txt`, one per line.
 
-## Self-healing matrix
+## What survives a wipe
 
-| Wiped / lost | Heals? | How |
+"Reinstalled" means: re-extracted from the cached archive if it's still
+there, otherwise downloaded again.
+
+| Lost | Recovered? | How |
 |---|---|---|
-| IDE binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download |
-| Cached tarball | ✅ | Re-download on next install |
-| IDE plugins | ✅ | Re-fetch from GitHub releases via marker files |
-| IDE settings (options/, keymaps/, codestyles/, …) | ✅ | Curated backup/restore via $HOME |
-| mise runtimes | ✅ | `mise install` reads config.toml |
-| Emacs binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
-| PostgreSQL binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
-| Docker config on /goinfre wipe | ✅ | `daemon.json` kept in `$HOME`; data-root re-created on /goinfre + daemon restarted |
-| Docker images/volumes/containers | ❌ | data-root on volatile /goinfre — reproducible (rebuild / re-pull / re-seed) |
-| inotify-tools binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release |
-| clangd binary on /sgoinfre | ✅ | Re-extract from cached zip, else re-download from clangd/clangd Release |
-| gh binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
-| glow binary on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified against upstream checksums) |
-| gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
-| Ghidra + JDK 21 on /sgoinfre | ✅ | Re-extract from cached zip/tarball, else re-download (sha256 verified) |
-| OCaml toolchain on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release (sha256 verified) |
-| GCC toolchain on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release (sha256 verified); rpath specs re-written |
-| graphviz binaries on /sgoinfre | ✅ | Re-extract from cached .debs, else re-download via `apt-get download` |
-| ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
-| OpenCode binary on /sgoinfre | ✅ | `opencode-bootstrap` opts into mise; `mise-bootstrap` restores it from config.toml |
-| Global npm packages | ✅ | Re-install from npm-globals.txt |
-| Go tools (`~/go/bin/*`) | ✅ (implicit) | Binaries live in $HOME; survive /sgoinfre wipes |
-| Tailscale binaries on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified) |
-| Tor Browser on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download (sha256 verified); latest release picked up on login |
-| torsocks on /sgoinfre | ✅ | Re-extract from cached .deb, else re-download via `apt-get download` |
-| Tailscale auth state | ✅ (implicit) | Lives in `~/.config/tailscale/` on $HOME; survives /sgoinfre wipes |
-| Working clones on /goinfre | ✅ | `repo-bootstrap` re-clones on login |
-| Uncommitted work in those clones | ❌ | Volatile /goinfre — commit and push before logging out |
-| Project-specific settings (workspace/, history, recents) | ❌ | Not backed up — rebuild when you reopen the project |
+| IDE binary on /sgoinfre | yes | Reinstalled |
+| Cached archives | yes | Downloaded again on next install |
+| IDE plugins | yes | Fetched again from GitHub releases |
+| IDE settings (options/, keymaps/, codestyles/, …) | yes | Restored from the backup in $HOME |
+| Project-specific IDE state (workspace/, history, recents) | no | Not backed up; rebuilt when you reopen the project |
+| mise runtimes, OpenCode | yes | `mise install` from config.toml |
+| Global npm packages | yes | Reinstalled from npm-globals.txt |
+| Go tools (`~/go/bin/*`) | not affected | Live in $HOME |
+| Emacs, PostgreSQL, inotify-tools, clangd, gh, glow, fzf, act, actionlint, GCC, OCaml, Ghidra + JDK, Tailscale, Tor Browser | yes | Reinstalled; GCC's specs file is rewritten |
+| graphviz, torsocks | yes | Reinstalled from cached .debs or `apt-get download` |
+| CUDA libraries | yes | Re-extracted from cached .debs, else downloaded from NVIDIA's repository |
+| ollama models | yes | Missing models from ollama-models.txt pulled again |
+| gh and Tailscale auth | not affected | Live in $HOME |
+| Docker config after a /goinfre wipe | yes | `daemon.json` is in $HOME; data-root recreated and daemon restarted |
+| Docker images, volumes, containers | no | On /goinfre; rebuild or pull again |
+| Working clones on /goinfre | yes | `repo-bootstrap` clones them again |
+| Uncommitted work in those clones | no | Commit and push before logging out |
 
-## Possible future additions
+## Possible additions
 
-Same shape as the existing scripts (single-binary tarball, persistent on
-`/sgoinfre`, idempotent re-fetch):
+Planned:
 
-- **`restic` + `rclone`** — encrypted, deduplicated, incremental backup of
-  `$HOME` and curated `/sgoinfre` state to B2/Drive/SFTP. Closes whole-machine
-  loss as a recovery scenario (the matrix above only heals `/sgoinfre` wipes).
-- **`texlive-bootstrap`** — `install-tl` is scriptable, ~6 GB; the canonical
-  "no apt, can't fit in $HOME" candidate.
-- **LSP toolbelt** — `lua-language-server`, `taplo`, `tinymist`,
-  `pyright`. Each mirrors `clangd-bootstrap` almost verbatim.
-- **CLI toolbelt** — `ripgrep`, `fd`, `bat`, `fzf`, `jq`, `just`, `direnv`,
-  `zoxide`, `delta`. One bundled `qol-bootstrap` for the lot.
-- **`uv-bootstrap`** — Astral's Python toolchain; per-project envs in
-  milliseconds, complements mise.
+- `clang-bootstrap`: a current clang (with lld, clang-format, clang-tidy and
+  libc++), repackaged in CI from the official LLVM release, which is 1.2 GB
+  compressed. It would use GCC 16's `libstdc++` by default, so it needs
+  `gcc-bootstrap` working first.
 
-Won't fit the constraints (don't try):
+Would fit the same pattern:
 
-- Anything needing a 24/7 listener reachable from outside the cluster (gitea,
-  syncthing, jellyfin) — the cluster network and per-login session lifetime
-  kill it.
-- Rootless Podman/Docker — needs `/etc/subuid` + `/etc/subgid` entries, which
-  need root.
+- `restic` + `rclone`: encrypted incremental backups of `$HOME` and selected
+  `/sgoinfre` state to B2, Drive or SFTP. Would cover losing everything, not
+  just a `/sgoinfre` wipe.
+- `texlive-bootstrap`: `install-tl` is scriptable; about 6 GB, too big for
+  `$HOME`.
+- Language servers: `lua-language-server`, `taplo`, `tinymist`, `pyright`.
+  Each would be close to a copy of `clangd-bootstrap`.
+- CLI tools: `ripgrep`, `fd`, `bat`, `jq`, `just`, `direnv`, `zoxide`,
+  `delta`, perhaps as one script.
+- `uv-bootstrap`: Astral's Python toolchain, alongside mise.
 
 ## License
 
-[Unlicense](./LICENSE) — public domain, no attribution required, no warranty.
+[Unlicense](./LICENSE): public domain, no warranty.
