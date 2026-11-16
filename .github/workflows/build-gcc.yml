@@ -72,8 +72,11 @@ jobs:
           v="${{ steps.ver.outputs.version }}"
           base="https://ftp.gnu.org/gnu/gcc/gcc-$v"
           curl -fsSL --retry 5 --retry-delay 10 -o "gcc-$v.tar.xz" "$base/gcc-$v.tar.xz"
-          curl -fsSL --retry 5 --retry-delay 10 -o sha512.sum "$base/sha512.sum"
-          grep " gcc-$v.tar.xz\$" sha512.sum | sha512sum -c -
+          curl -fsSL --retry 5 --retry-delay 10 -o "gcc-$v.tar.xz.sig" "$base/gcc-$v.tar.xz.sig"
+          # ftp.gnu.org has no checksum file; verify the release manager's
+          # signature against GNU's keyring of maintainer keys.
+          curl -fsSL --retry 5 --retry-delay 10 -o gnu-keyring.gpg https://ftp.gnu.org/gnu/gnu-keyring.gpg
+          gpgv --keyring ./gnu-keyring.gpg "gcc-$v.tar.xz.sig" "gcc-$v.tar.xz"
           tar -xJf "gcc-$v.tar.xz"
           # Fetches gmp/mpfr/mpc/isl and checks them against hashes in-tree.
           (cd "gcc-$v" && ./contrib/download_prerequisites)
