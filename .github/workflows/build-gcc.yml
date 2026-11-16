@@ -1,0 +1,149 @@
+name: Build GCC
+
+# Builds a C/C++ GCC toolchain from the GNU source tarball and publishes it as
+# a GitHub Release asset. gcc-bootstrap pulls from these releases after an
+# sgoinfre wipe.
+#
+# Why this workflow exists: the cluster's newest compiler is g++-12, whose
+# libstdc++ lacks most of the C++23 library (<print>, std::ranges::to, ...).
+# A newer clang wouldn't help on its own — it uses that same system libstdc++.
+# GNU ships GCC as source only, and building it on NFS after every wipe would
+# take far too long.
+#
+# GCC is relocatable (the driver finds its own pieces relative to argv[0]), so
+# unlike build-ocaml.yml the prefix here is arbitrary. gmp/mpfr/mpc/isl come
+# from contrib/download_prerequisites and are linked statically into cc1plus,
+# so the tarball has no runtime deps beyond glibc and the system binutils.
+#
+# Runner pinned to ubuntu-22.04 for the glibc 2.35 floor that matches the 42
+# cluster baseline — same reasoning as build-emacs.yml.
+#
+# Trigger by pushing a tag named gcc-<VERSION>, e.g.:
+#   git tag gcc-16.2.0 && git push origin gcc-16.2.0
+# Or run manually via the Actions UI (workflow_dispatch).
+
+on:
+  push:
+    tags:
+      - "gcc-*"
+  workflow_dispatch:
+    inputs:
+      gcc_version:
+        description: "GCC version to build (e.g. 16.2.0)"
+        required: true
+        default: "16.2.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      PREFIX: /opt/gcc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            v="${{ inputs.gcc_version }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+            v="${tag#gcc-}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=gcc-$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          # Same Azure-mirror workaround as build-inotify-tools.yml.
+          sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison texinfo xz-utils bzip2 curl
+
+      - name: Fetch and verify source
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          base="https://ftp.gnu.org/gnu/gcc/gcc-$v"
+          curl -fsSL --retry 5 --retry-delay 10 -o "gcc-$v.tar.xz" "$base/gcc-$v.tar.xz"
+          curl -fsSL --retry 5 --retry-delay 10 -o sha512.sum "$base/sha512.sum"
+          grep " gcc-$v.tar.xz\$" sha512.sum | sha512sum -c -
+          tar -xJf "gcc-$v.tar.xz"
+          # Fetches gmp/mpfr/mpc/isl and checks them against hashes in-tree.
+          (cd "gcc-$v" && ./contrib/download_prerequisites)
+
+      - name: Build
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          sudo mkdir -p "$PREFIX"
+          sudo chown "$(id -u):$(id -g)" "$PREFIX"
+          mkdir build && cd build
+          # --disable-bootstrap: one stage instead of three. The runner's gcc 11
+          # is a sound host compiler, and three stages would triple build time.
+          # PIE default matches Ubuntu's system gcc.
+          "../gcc-$v/configure" \
+            --prefix="$PREFIX" \
+            --enable-languages=c,c++ \
+            --disable-multilib \
+            --disable-bootstrap \
+            --disable-nls \
+            --enable-default-pie \
+            --with-pkgversion="42-dev-bootstrap"
+          make -j"$(nproc)"
+          make install-strip
+
+      - name: Package tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          out="gcc-${v}-linux-x86_64.tar.xz"
+          tar -C "$(dirname "$PREFIX")" --transform "s|^gcc|gcc-$v|" -cJf "$out" gcc
+          sha256sum "$out" > "${out}.sha256"
+          ls -lh "$out" "${out}.sha256"
+
+      - name: Smoke-test the tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          # Extract somewhere other than the build prefix: proves relocation
+          # works, and that nothing depends on the runner's state.
+          sudo rm -rf "$PREFIX"
+          dest="$RUNNER_TEMP/elsewhere/gcc-$v"
+          mkdir -p "$dest"
+          tar -xJf "gcc-${v}-linux-x86_64.tar.xz" -C "$dest" --strip-components=1
+          mkdir -p check && cd check
+          cat > t.cpp <<'EOF'
+          #include <print>
+          #include <ranges>
+          #include <vector>
+          #include <expected>
+          int main() {
+              std::vector<int> v{1, 2, 3};
+              auto w = v | std::views::transform([](int x) { return x * x; })
+                         | std::ranges::to<std::vector>();
+              for (auto [a, b] : std::views::zip(v, w)) std::println("{} {}", a, b);
+              std::expected<int, int> e = 42;
+              return *e == 42 ? 0 : 1;
+          }
+          EOF
+          "$dest/bin/g++" -std=c++23 -Wall -Wextra -Werror -pedantic \
+            -Wl,-rpath,"$dest/lib64" t.cpp -o t
+          env -i PATH=/usr/bin:/bin ./t
+          "$dest/bin/gcc" --version
+          "$dest/bin/g++" -std=c++23 -O2 -fsanitize=address,undefined \
+            -Wl,-rpath,"$dest/lib64" t.cpp -o t-san
+          ./t-san
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          files: |
+            gcc-${{ steps.ver.outputs.version }}-linux-x86_64.tar.xz
+            gcc-${{ steps.ver.outputs.version }}-linux-x86_64.tar.xz.sha256
+          generate_release_notes: true

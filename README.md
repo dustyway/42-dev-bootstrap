@@ -148,6 +148,18 @@ there. No opam on the cluster: adding a package means changing the workflow
 and rebuilding. `~/bin/ocaml` and `~/bin/utop` are wrappers that set the
 variables `opam env` would.
 
+**`gcc-bootstrap [VERSION]`**
+Installs a current GCC (C and C++) from a tarball built by
+`.github/workflows/build-gcc.yml`. The cluster's newest is g++-12, whose
+libstdc++ lacks most of the C++23 library (`<print>`, `std::ranges::to`, …);
+a newer clang wouldn't help, since it uses that same libstdc++. GCC is
+relocatable, so the tarball works from any path. On install, a `specs` file
+adds `-rpath $SGO/gcc/<version>/lib64` to every link, so built programs find
+the new libstdc++ without `LD_LIBRARY_PATH`. Launchers are versioned only
+(`~/bin/g++-16`, `gcc-16`, …) so the system `cc`/`c++` used for graded 42
+projects is untouched; select it explicitly, e.g.
+`cmake -DCMAKE_CXX_COMPILER=g++-16`.
+
 **`ghidra-bootstrap [VERSION]`**
 Installs the [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
 reverse-engineering suite from the upstream release zip. Ghidra 12 needs
@@ -357,6 +369,7 @@ tool isn't in your config. Global npm packages live in
 | gh auth tokens | ✅ (implicit) | Live in `~/.config/gh/` on $HOME; survive /sgoinfre wipes |
 | Ghidra + JDK 21 on /sgoinfre | ✅ | Re-extract from cached zip/tarball, else re-download (sha256 verified) |
 | OCaml toolchain on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release (sha256 verified) |
+| GCC toolchain on /sgoinfre | ✅ | Re-extract from cached tarball, else re-download from GitHub Release (sha256 verified); rpath specs re-written |
 | graphviz binaries on /sgoinfre | ✅ | Re-extract from cached .debs, else re-download via `apt-get download` |
 | ollama models on /sgoinfre | ✅ | Re-pull anything missing from `~/Apps/etc/ollama-models.txt` |
 | OpenCode binary on /sgoinfre | ✅ | `opencode-bootstrap` opts into mise; `mise-bootstrap` restores it from config.toml |
