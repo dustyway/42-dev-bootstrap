@@ -33,6 +33,7 @@ install -m 0755 "$REPO_ROOT/bin/actionlint-bootstrap"      "$HOME/Apps/bin/actio
 install -m 0755 "$REPO_ROOT/bin/act-bootstrap"             "$HOME/Apps/bin/act-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/glow-bootstrap"            "$HOME/Apps/bin/glow-bootstrap"
+install -m 0755 "$REPO_ROOT/bin/clang++-libcxx"            "$HOME/Apps/bin/clang++-libcxx"
 install -m 0755 "$REPO_ROOT/bin/repo-bootstrap"            "$HOME/Apps/bin/repo-bootstrap"
 install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
 install -m 0755 "$REPO_ROOT/bin/42-dev-install"            "$HOME/Apps/bin/42-dev-install"

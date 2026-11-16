@@ -1,0 +1,28 @@
+#!/bin/sh
+# clang++ against libc++ (conda:libcxx-devel via mise) with libc++'s
+# extensive hardening on: bounds-checked operator[], iterator and
+# optional/expected misuse checks, ... Use as CMAKE_CXX_COMPILER in a
+# separate build dir. Override the mode with e.g.
+#   -U_LIBCPP_HARDENING_MODE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG
+L=$(mise where conda:libcxx-devel 2>/dev/null) || {
+    echo "clang++-libcxx: conda:libcxx-devel not installed (mise use -g conda:libcxx-devel)" >&2
+    exit 1
+}
+
+# Link flags (incl. -stdlib, since headers come via -isystem) only when
+# linking: on -c they'd trigger "argument unused" warnings, which -Werror
+# turns into errors.
+link=1
+for a in "$@"; do
+    case "$a" in -c|-E|-S|-M|-MM|-fsyntax-only) link=0 ;; esac
+done
+
+# A failed check traps (SIGILL, "Illegal instruction"); gdb/lldb show the
+# reason in the backtrace. The debug mode prints it and aborts instead.
+set -- -nostdinc++ -isystem "$L/include/c++/v1" \
+    -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE "$@"
+if [ "$link" = 1 ]; then
+    exec clang++ -stdlib=libc++ -L"$L/lib" -Wl,-rpath,"$L/lib" "$@"
+else
+    exec clang++ "$@"
+fi

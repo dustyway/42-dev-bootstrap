@@ -352,14 +352,34 @@ elixir = "1.20.1-otp-29" # hex / rebar / phx_new archives, livebook, IEx GTK fil
 erlang = "29.0.2"        # wx 3.2 build, Erlang compiled from source, LD_LIBRARY_PATH
 ```
 
-A current GCC comes from conda-forge through mise's `conda:` backend. The
-cluster's newest is g++-12, whose standard library lacks most of C++23.
-Programs it builds find the newer `libstdc++` through an rpath, without
-`LD_LIBRARY_PATH`:
+Current C/C++ compilers and tools come from conda-forge through mise's
+`conda:` backend. The cluster's newest is g++-12, whose standard library lacks
+most of C++23. Programs built with these compilers find the newer
+`libstdc++` through an rpath, without `LD_LIBRARY_PATH`:
 
 ```toml
-"conda:gxx" = "16.2.0"   # g++ / c++
+"conda:gxx" = "16.2.0"            # g++ / c++
+"conda:clangxx" = "23.1.5"        # clang++, uses GCC 16's libstdc++
+"conda:clang-format" = "23.1.5"
+"pipx:clang-tidy" = "23.1.4"      # see "Open" below
+"conda:libcxx-devel" = "23.1.5"   # libc++ for clang++-libcxx
 ```
+
+Only `g++`/`c++` and `clang++` change; `gcc`/`cc` and `clang` stay the system
+versions. Use `clangd-bootstrap` for clangd, not conda's `clang-tools`: its
+clangd and clang-tidy can't find clang's built-in headers and would shadow the
+`~/bin/clangd` wrapper.
+
+`clang++-libcxx` (installed to `~/Apps/bin`) runs clang++ against libc++ with
+extensive hardening, which traps on checks like out-of-range `operator[]`.
+Use it as the compiler of a separate build directory:
+
+```sh
+cmake -S . -B build-libcxx -DCMAKE_CXX_COMPILER=clang++-libcxx
+```
+
+For a message instead of a bare trap, add
+`-U_LIBCPP_HARDENING_MODE -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG`.
 
 Extras are only set up for tools in the config. Global npm packages go in
 `~/Apps/etc/npm-globals.txt`, one per line.
@@ -388,6 +408,22 @@ there, otherwise downloaded again.
 | Docker images, volumes, containers | no | On /goinfre; rebuild or pull again |
 | Working clones on /goinfre | yes | `repo-bootstrap` clones them again |
 | Uncommitted work in those clones | no | Commit and push before logging out |
+
+## Open
+
+- MemorySanitizer: conda's clang ships the MSan runtime, but MSan also needs
+  a libc++ built with `-fsanitize=memory`, which nobody ships. Plan: build
+  libc++/libc++abi 23.1.5 with MSan in CI and add a `clang++-msan` launcher
+  next to `clang++-libcxx`.
+- `clang-tidy` from the command line reads the system GCC 12 headers
+  (`'print' file not found`), because unlike clangd it has no
+  `--query-driver`. `--extra-arg-before=--gcc-install-dir=<dir of
+  $(g++ -print-libgcc-file-name)>` fixes it. Either wrap it, or rely on
+  clangd's built-in clang-tidy in the editor.
+- `42-dev-uninstall` leaves a JetBrains IDE's `$SGO/jetbrains-config/<ide>`
+  and `/goinfre/$USER/jetbrains/<ide>` behind.
+- mise exposes conda clangxx's `x86_64-conda-linux-gnu-clang++.cfg` as a
+  command on `PATH`. Harmless, but noise.
 
 ## Possible additions
 
