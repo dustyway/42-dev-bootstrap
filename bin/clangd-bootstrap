@@ -4,9 +4,9 @@
 # (idempotent).
 #
 # Pulls a prebuilt zip from https://github.com/clangd/clangd/releases and
-# extracts to /sgoinfre so it persists across /goinfre wipes. The clangd
-# binary is symlinked into ~/bin, which Ubuntu's default ~/.profile prepends
-# to PATH — so it shadows the apt /bin/clangd without any shell edits.
+# extracts to /sgoinfre so it persists across /goinfre wipes. ~/bin/clangd is
+# a wrapper that adds --query-driver for mise-installed compilers (see the end
+# of this script); it shadows the apt /bin/clangd when ~/bin is first in PATH.
 #
 # Why this exists: Ubuntu 22.04 (and even 24.04) apt pins clangd to clang-14,
 # which is too old for recent .clang-format keys (e.g. InsertNewlineAtEOF) and
@@ -23,13 +23,13 @@
 #
 # ─── Placement (same reasoning as emacs-/postgres-bootstrap) ────────────────
 # App binary     → $SGO/clangd/<version>/           persistent on sgoinfre
-# Cached zip     → $SGO/.cache/clangd-linux-<v>…    ~50 MB, re-extract
-# Launcher       → ~/bin/clangd                     symlink, tiny
+# Cached zip     → $SGO/.cache/clangd-linux-<v>…    ~110 MB, re-extract
+# Launcher       → ~/bin/clangd                     wrapper script, tiny
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-VERSION="${1:-19.1.2}"
+VERSION="${1:-23.1.0}"
 ASSET="clangd-linux-${VERSION}.zip"
 URL="https://github.com/clangd/clangd/releases/download/${VERSION}/${ASSET}"
 
@@ -50,6 +50,9 @@ if [[ ! -x "$APP_HOME/bin/clangd" || "$installed" != "$VERSION" ]]; then
         echo "[clangd-bootstrap] switching version: '$installed' -> '$VERSION'"
         rm -f "$ZIPFILE"
     fi
+    # Drop other versions and their zips: sgoinfre's quota is tight.
+    find "$SGO/clangd" -mindepth 1 -maxdepth 1 ! -name "$VERSION" -exec rm -rf {} +
+    find "$SGO/.cache" -maxdepth 1 -name 'clangd-linux-*.zip' ! -name "$ASSET" -delete
     if [[ ! -s "$ZIPFILE" ]]; then
         echo "[clangd-bootstrap] downloading $ASSET"
         curl -fL --retry 3 -o "$ZIPFILE" "$URL"
@@ -59,9 +62,8 @@ if [[ ! -x "$APP_HOME/bin/clangd" || "$installed" != "$VERSION" ]]; then
     mkdir -p "$APP_HOME.tmp"
     # The zip contains a single top-level dir "clangd_<VERSION>/" — strip it
     # so $APP_HOME/bin and $APP_HOME/lib sit at the root (matches the layout
-    # of sibling bootstraps). Clangd uses readlink() to find its resource-dir
-    # relative to the real binary path, so the ~/bin symlink still resolves
-    # the bundled libclang headers correctly.
+    # of sibling bootstraps). The ~/bin wrapper execs the real binary path,
+    # so clangd finds its bundled resource headers next to it.
     unzip -q "$ZIPFILE" -d "$APP_HOME.tmp"
     topdir="$APP_HOME.tmp/clangd_${VERSION}"
     [[ -d "$topdir" ]] || { echo "[clangd-bootstrap] unexpected zip layout: no $topdir" >&2; exit 1; }
@@ -71,5 +73,17 @@ if [[ ! -x "$APP_HOME/bin/clangd" || "$installed" != "$VERSION" ]]; then
     printf '%s' "$VERSION" > "$VERSION_MARKER"
 fi
 
+# Wrapper instead of a symlink, to pass --query-driver. Compilers from mise
+# (e.g. conda:gxx's g++ 16) live under MISE_DATA_DIR, and clangd only asks a
+# compiler for its system include paths when --query-driver allows it.
+# Otherwise clangd falls back to the system GCC 12 headers and reports
+# C++23 headers such as <print> as missing. rm first: a plain redirect would
+# follow an old symlink into the install.
+MISE_DATA="${MISE_DATA_DIR:-$SGO/mise-data}"
 mkdir -p "$HOME/bin"
-ln -sf "$APP_HOME/bin/clangd" "$HOME/bin/clangd"
+rm -f "$HOME/bin/clangd"
+cat > "$HOME/bin/clangd" <<EOF
+#!/bin/sh
+exec "$APP_HOME/bin/clangd" --query-driver="$MISE_DATA/**" "\$@"
+EOF
+chmod +x "$HOME/bin/clangd"

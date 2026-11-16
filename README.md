@@ -120,6 +120,11 @@ apt's clangd 14, which rejects newer `.clang-format` keys such as
 built in, so formatting through the editor (e.g. `eglot-format-buffer`)
 works.
 
+`~/bin/clangd` is a wrapper that passes `--query-driver` for compilers under
+`MISE_DATA_DIR`, so clangd reads the C++ headers of mise's GCC 16 instead of
+the system GCC 12 ones (where `<print>` doesn't exist). Old versions are
+removed when the version changes.
+
 ### `gh-bootstrap`
 
 Installs the GitHub CLI from the `cli/cli` releases. apt's `gh` lags behind
