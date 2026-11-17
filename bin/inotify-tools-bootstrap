@@ -8,7 +8,7 @@
 # has no inotify-tools plugin, apt needs root, and upstream publishes no
 # prebuilt binaries.
 #
-# Usage:  inotify-tools-bootstrap [VERSION]
+# Usage:  inotify-tools-bootstrap [RELEASE]   e.g. 4.25.9.0-r1
 # Env override:  INOTIFY_TOOLS_BOOTSTRAP_REPO=owner/repo
 #
 # ─── Placement ───────────────────────────────────────────────────────────────
@@ -20,17 +20,25 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
-VERSION="${1:-4.25.9.0}"
+# RELEASE is upstream's version, plus -r<N> for a rebuild of it (r1 sets the
+# version string upstream forgot to bump; see build-inotify-tools.yml).
+RELEASE="${1:-4.25.9.0-r1}"
+VERSION="${RELEASE%-r*}"
 REPO="${INOTIFY_TOOLS_BOOTSTRAP_REPO:-dustyway/42-dev-bootstrap}"
-ASSET="inotify-tools-${VERSION}-linux-x86_64.tar.gz"
-URL="https://github.com/${REPO}/releases/download/inotify-tools-${VERSION}/${ASSET}"
+ASSET="inotify-tools-${RELEASE}-linux-x86_64.tar.gz"
+URL="https://github.com/${REPO}/releases/download/inotify-tools-${RELEASE}/${ASSET}"
+# The directory is per upstream version; the marker records the release, so
+# a rebuild replaces it.
 APP_HOME="$SGO/inotify-tools/${VERSION}"
 
-if needs_install "$APP_HOME" "$VERSION" bin/inotifywait; then
+if needs_install "$APP_HOME" "$RELEASE" bin/inotifywait; then
     fetch "$URL" "$CACHE/$ASSET"
     fetch "$URL.sha256" "$CACHE/$ASSET.sha256"
     verify_sha256 "$CACHE/$ASSET" "$CACHE/$ASSET.sha256"
-    install_tarball "$CACHE/$ASSET" "$APP_HOME" "$VERSION" --strip-components=1
+    install_tarball "$CACHE/$ASSET" "$APP_HOME" "$RELEASE" --strip-components=1
+    # Drop other releases' tarballs.
+    find "$CACHE" -maxdepth 1 -name 'inotify-tools-*-linux-x86_64.tar.gz*' \
+        ! -name "$ASSET" ! -name "$ASSET.sha256" -delete
 fi
 
 link_launchers "$APP_HOME/bin"

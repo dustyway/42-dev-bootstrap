@@ -123,7 +123,10 @@ pass `--load` or `--push`. Images pulled from a registry
 Installs `inotifywait` and `inotifywatch`, which Phoenix's `file_system`
 dependency uses for live reload. There is no mise plugin or upstream binary,
 so `build-inotify-tools.yml` builds a static tarball, published with a
-`.sha256` file that the bootstrap requires.
+`.sha256` file that the bootstrap requires. Upstream's 4.25.9.0 tag still
+declares 4.23.9.0, so the build sets the version string itself (release
+`4.25.9.0-r1`). Upstream 4.26 is a Rust rewrite; the workflow builds the
+4.25 line.
 
 ### `clangd-bootstrap`
 
