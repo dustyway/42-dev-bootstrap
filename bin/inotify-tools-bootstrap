@@ -18,6 +18,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 # RELEASE is upstream's version, plus -r<N> for a rebuild of it (r1 sets the

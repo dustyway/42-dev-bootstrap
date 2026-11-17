@@ -1,0 +1,15 @@
+# shellcheck settings for this repo; 42-dev-validate runs shellcheck on every
+# script (install it with `mise install` in the repo).
+
+# Follow `source` lines: scripts mark the file with `# shellcheck source=`.
+external-sources=true
+source-path=SCRIPTDIR
+
+# SC2016: single-quoted $HOME and friends are intended: messages that print
+# the literal text, regexes and sed expressions that match it, and mise
+# config values that mise expands itself.
+disable=SC2016
+
+# SC2012: `ls -d /sgoinfre/goinfre/Perso/*"$USER"*` resolves the cluster's
+# documented wildcard path; the names involved are logins and tool names.
+disable=SC2012

@@ -27,6 +27,7 @@
 #   rm -rf /sgoinfre/goinfre/Perso/*<you>*/docker-buildcache
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 docker buildx version >/dev/null 2>&1 || die "docker buildx not available"

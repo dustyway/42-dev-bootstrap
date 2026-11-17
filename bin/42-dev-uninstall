@@ -48,6 +48,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-uninstall] components registry not found" >&2; exit 1; }
+# shellcheck source=../lib/components.bash
 source "$COMPONENTS_LIB"
 
 # The heal manifest first, then shell init files that may still hold

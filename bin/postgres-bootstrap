@@ -21,6 +21,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 raw_version="${1:-18.3}"

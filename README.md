@@ -366,6 +366,10 @@ Then choose what reinstalls on login. Either pick components in
 42-dev-heal --ensure-hook
 ```
 
+`install.sh` only adds and replaces files in `~/Apps`; it doesn't delete
+scripts the repo no longer has. It records the commit it installed in
+`~/Apps/etc/42-dev-bootstrap.version`, which `42-dev-heal --status` shows.
+
 Coming from an older setup with one `(nohup ~/Apps/bin/<x>-bootstrap &>/dev/null &)`
 line per tool in `~/.zprofile`? `42-dev-heal --migrate` moves those lines into
 the manifest, comments out the originals and adds the hook. It lists the
@@ -445,7 +449,7 @@ milliseconds.
 | Command | Does |
 |---|---|
 | `42-dev-heal` | Run every manifest entry |
-| `42-dev-heal --status` | Disk usage of both tiers, then the result, duration and log path of each entry from the last run |
+| `42-dev-heal --status` | Which commit `~/Apps` was installed from (and whether the repo has moved on since), disk usage of both tiers, then the result, duration and log path of each entry from the last run |
 | `42-dev-heal --disk` | Disk usage and the largest directories in `$HOME` and `/sgoinfre`, labelled with the components installed there (walks `/sgoinfre`: about 30 s) |
 | `42-dev-heal --failed` | Run again only what failed |
 | `42-dev-heal --ensure-hook` | Create the manifest and add the `~/.zprofile` line if missing |
@@ -506,6 +510,10 @@ script that does:
 
 The three others don't look up `/sgoinfre`: `docker` and `repo` work on
 `/goinfre`, and `aider` installs into `UV_TOOL_DIR` from your profile.
+
+`42-dev-validate` also runs [shellcheck](https://www.shellcheck.net/) on every
+script, with the settings in `.shellcheckrc`. The repo's `mise.toml` pins it;
+run `mise install` in the repo once. Without it, that check is skipped.
 
 ## mise runtimes
 
@@ -643,6 +651,13 @@ Package-manager features not built yet, roughly in order of usefulness:
   wired into the scripts rather than declared.
 - **Rollback.** An upgrade replaces the previous version, so there is
   nothing to go back to.
+- **Tagged releases.** `v0.x` tags with release notes, so people using a
+  fork or clone can see what changed and when an upgrade needs action.
+  `install.sh` already records which commit is installed.
+- **Python for the manager commands.** The features above work with
+  structured data (JSON from release APIs, version comparison, file lists),
+  which bash handles poorly. The `42-dev-*` commands could move to Python
+  (the cluster's `/bin/python3` is 3.10) while the bootstraps stay in bash.
 
 ## License
 

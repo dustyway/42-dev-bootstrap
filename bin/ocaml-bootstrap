@@ -24,6 +24,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 RELEASE="${1:-5.5.2-r1}"

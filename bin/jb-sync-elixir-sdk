@@ -12,6 +12,7 @@
 # Usage: jb-sync-elixir-sdk (no args)
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 MISE="${MISE_BIN:-$HOME/Apps/bin/mise}"

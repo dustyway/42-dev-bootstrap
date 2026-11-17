@@ -32,6 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-install] components registry not found" >&2; exit 1; }
+# shellcheck source=../lib/components.bash
 source "$COMPONENTS_LIB"
 
 # Where a login-time run can come from: the heal manifest, plus old-style

@@ -29,6 +29,7 @@
 # open coding model that fits sgoinfre with headroom.
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 OLLAMA_BIN="${OLLAMA_BIN:-/bin/ollama}"

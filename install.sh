@@ -17,6 +17,18 @@ for f in "$REPO_ROOT"/lib/*.bash; do
     install -m 0644 "$f" "$HOME/Apps/lib/$(basename "$f")"
 done
 
+# Record what was installed, for `42-dev-heal --status`. "dirty" means the
+# working copy had uncommitted changes, so ~/Apps may differ from the commit.
+{
+    commit=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+    dirty=no
+    if [[ "$commit" != unknown && -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]]; then
+        dirty=yes
+    fi
+    printf 'commit=%s\ndirty=%s\ninstalled=%s\nrepo=%s\n' \
+        "$commit" "$dirty" "$(date '+%Y-%m-%d %H:%M')" "$REPO_ROOT"
+} > "$HOME/Apps/etc/42-dev-bootstrap.version"
+
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
     cp "$REPO_ROOT/etc/npm-globals.txt.example" "$HOME/Apps/etc/npm-globals.txt"
     echo "[install] seeded $HOME/Apps/etc/npm-globals.txt (edit to customize)"

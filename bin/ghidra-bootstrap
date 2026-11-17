@@ -30,6 +30,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 DEFAULT_VERSION="12.1.4"

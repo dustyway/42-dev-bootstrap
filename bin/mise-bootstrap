@@ -8,6 +8,7 @@
 # ~/Apps/etc/npm-globals.txt (one npm package per line).
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 # Pin storage to the school's persistent network share + local disk. Export

@@ -38,6 +38,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-heal] components registry not found" >&2; exit 1; }
+# shellcheck source=../lib/components.bash
 source "$COMPONENTS_LIB"
 
 MANIFEST="$HEAL_MANIFEST"
@@ -210,7 +211,7 @@ pct() { echo $(( ($1 * 100 + $2 / 2) / $2 )); }
 
 # usage_line LABEL USED LIMIT
 usage_line() {
-    printf '  %-10s %6s of %6s  (%d%%)\n' "$1" "$(human "$2")" "$(human "$3")" $(pct "$2" "$3")
+    printf '  %-10s %6s of %6s  (%d%%)\n' "$1" "$(human "$2")" "$(human "$3")" "$(pct "$2" "$3")"
 }
 
 # disk_warnings: one line per tier past its threshold, nothing otherwise.
@@ -219,7 +220,7 @@ disk_warnings() {
     read -r used limit < <(home_usage) || true
     if [[ -n "${limit:-}" ]] && (( used * 100 >= limit * HOME_WARN_PCT )); then
         printf '$HOME is %d%% full (%s of %s); when full, nothing can be written.\n' \
-            $(pct "$used" "$limit") "$(human "$used")" "$(human "$limit")"
+            "$(pct "$used" "$limit")" "$(human "$used")" "$(human "$limit")"
     fi
     used="" limit=""
     read -r used limit < <(sgo_usage) || true
@@ -293,7 +294,33 @@ print_rows() {
     done <"$1"
 }
 
+# installed_version: what install.sh last put in ~/Apps, and whether the repo
+# it came from has moved on since.
+installed_version() {
+    local f="$HOME/Apps/etc/42-dev-bootstrap.version" commit="" dirty="" installed="" repo="" k v head
+    if [[ ! -f "$f" ]]; then
+        say "scripts: install record missing (run install.sh)"
+        return 0
+    fi
+    while IFS='=' read -r k v; do
+        case "$k" in
+            commit) commit=$v ;; dirty) dirty=$v ;; installed) installed=$v ;; repo) repo=$v ;;
+        esac
+    done <"$f"
+    local note=""
+    [[ "$dirty" == yes ]] && note=" plus uncommitted changes"
+    say "scripts: commit $commit$note, installed $installed from $repo"
+    if [[ -n "$repo" && "$commit" != unknown ]] && head=$(git -C "$repo" rev-parse --short HEAD 2>/dev/null); then
+        if [[ "$head" != "$commit" ]]; then
+            say "  the repo is now at $head; run $repo/install.sh to update ~/Apps"
+        elif [[ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" && "$dirty" != yes ]]; then
+            say "  the repo has uncommitted changes not in ~/Apps"
+        fi
+    fi
+}
+
 status() {
+    installed_version
     disk_summary
     say "manifest: $MANIFEST ($(manifest_entries | wc -l) entries)"
     if is_running; then
@@ -373,7 +400,8 @@ migrate() {
     done
 
     # Back to front, so line numbers within a file stay valid.
-    local prefix="# [42-dev-heal migrated $(date +%Y-%m-%d)] " i
+    local prefix i
+    prefix="# [42-dev-heal migrated $(date +%Y-%m-%d)] "
     for (( i = ${#recs[@]} - 1; i >= 0; i-- )); do
         IFS=$'\t' read -r f l cmd <<<"${recs[i]}"
         sed -i --follow-symlinks "${l}s|^|${prefix}|" "$f"

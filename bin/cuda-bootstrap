@@ -36,6 +36,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 CUDA_PKG="${1:-12-9}"

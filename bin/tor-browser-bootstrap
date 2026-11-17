@@ -28,6 +28,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 FEED="https://aus1.torproject.org/torbrowser/update_3/release/downloads.json"

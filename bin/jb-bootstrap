@@ -67,6 +67,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 usage() { echo "usage: $(basename "$0") <PRODUCT_CODE>[@VERSION] [owner/repo[@tag] ...]" >&2; exit 2; }

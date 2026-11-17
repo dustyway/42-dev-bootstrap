@@ -47,6 +47,8 @@ COMPONENTS=(
     "jetbrains/rustrover|jb-bootstrap RR|jetbrains/rustrover|jb-bootstrap[[:space:]]+RR([[:space:]@]|\$)|safe|RustRover ~3 GB"
 )
 
+# Sets C_NAME, C_CMD, C_PATH, C_PATTERN, C_CLASS and C_DESC for the caller.
+# shellcheck disable=SC2034
 parse_component_row() {
     local needle="$1" row rest
     for row in "${COMPONENTS[@]}"; do

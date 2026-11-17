@@ -93,7 +93,27 @@ check_bootstrap_lib() {
     fi
 }
 
+# Run shellcheck: it catches bash pitfalls `bash -n` can't (a `grep -q` pipe that
+# fails under pipefail, a function ending in `[[ … ]] && cmd`, unquoted
+# expansions). Settings are in .shellcheckrc. shellcheck comes from the
+# repo's mise.toml; without it the check is skipped, not failed.
+check_shellcheck() {
+    local sc files=()
+    sc=$(command -v shellcheck 2>/dev/null || (cd "$ROOT" && mise which shellcheck 2>/dev/null) || true)
+    if [[ -z "$sc" ]]; then
+        printf '[skip] shellcheck not installed (run `mise install` in %s)\n' "$ROOT"
+        return 0
+    fi
+    mapfile -t files < <(grep -lE '^#!.*(ba)?sh' "$ROOT"/bin/* "$ROOT/install.sh"; printf '%s\n' "$ROOT"/lib/*.bash)
+    if (cd "$ROOT" && "$sc" "${files[@]}"); then
+        ok "shellcheck (${#files[@]} scripts)"
+    else
+        bad "shellcheck"
+    fi
+}
+
 check_bash_syntax
+check_shellcheck
 check_install_sources_exist
 check_registry
 check_bootstrap_lib
