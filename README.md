@@ -416,13 +416,24 @@ blocked:
 It runs three entries at a time (`-j N`), each with a two-hour timeout
 (`HEAL_TIMEOUT`), stdin closed and its own log in
 `/goinfre/$USER/42-dev-heal/logs/`. A lock stops overlapping runs on the same
-machine. The `zshrc.snippet` line `42-dev-heal --report` prints one line in
-new terminals when the last run had failures, and nothing otherwise.
+machine. The `zshrc.snippet` line `42-dev-heal --report` prints a line in
+new terminals when the last run had failures, and one per storage tier that
+is nearly full; otherwise it prints nothing:
+
+```
+42-dev-heal: $HOME is 87% full (8.1G of 9.3G); when full, nothing can be written. See 42-dev-heal --disk
+42-dev-heal: /sgoinfre holds 27.4G of 30.0G; a folder over 30 GB is wiped Sunday night. See 42-dev-heal --disk
+```
+
+The thresholds are 85% of `$HOME` (`HEAL_HOME_WARN_PCT`) and 27 GiB on
+`/sgoinfre` (`HEAL_SGO_WARN_GB`). The check uses `df` and `quota`, which take
+milliseconds.
 
 | Command | Does |
 |---|---|
 | `42-dev-heal` | Run every manifest entry |
-| `42-dev-heal --status` | Result, duration and log path of each entry from the last run |
+| `42-dev-heal --status` | Disk usage of both tiers, then the result, duration and log path of each entry from the last run |
+| `42-dev-heal --disk` | Disk usage and the largest directories in `$HOME` and `/sgoinfre`, labelled with the components installed there (walks `/sgoinfre`: about 30 s) |
 | `42-dev-heal --failed` | Run again only what failed |
 | `42-dev-heal --ensure-hook` | Create the manifest and add the `~/.zprofile` line if missing |
 | `42-dev-heal --migrate` | Move old `(nohup ~/Apps/bin/<x> &>/dev/null &)` lines from the shell init files into the manifest and comment them out |

@@ -14,8 +14,11 @@
 #   42-dev-heal                 run every manifest entry (what the login hook runs)
 #   42-dev-heal --failed        run only the entries that failed last time
 #   42-dev-heal --status        last run: result, duration and log of each entry
-#   42-dev-heal --report        one line if the last run had failures, else
-#                               nothing (called from ~/.zshrc)
+#   42-dev-heal --report        a line if the last run had failures, and one per
+#                               storage tier nearly full; else nothing (called
+#                               from ~/.zshrc)
+#   42-dev-heal --disk          $HOME and /sgoinfre usage, and their largest
+#                               directories (walks /sgoinfre: ~30 s)
 #   42-dev-heal --migrate [-y]  move `(nohup ~/Apps/bin/<x> … &)` lines from the
 #                               shell init files into the manifest
 #   42-dev-heal --ensure-hook   create the manifest and add the login hook to
@@ -25,6 +28,9 @@
 # Each entry runs with stdin closed, a timeout (HEAL_TIMEOUT seconds, default
 # 7200) and its own log in /goinfre/$USER/42-dev-heal/logs/. A lock stops two
 # runs on the same machine from overlapping. Exits 1 if any entry failed.
+#
+# Disk warnings fire at HEAL_HOME_WARN_PCT percent of $HOME (default 85) and
+# HEAL_SGO_WARN_GB GiB on /sgoinfre (default 27, of the 30 GB quota).
 
 set -euo pipefail
 
@@ -180,6 +186,102 @@ run_all() {
     say "all ok"
 }
 
+# ─── disk space ──────────────────────────────────────────────────────────────
+# $HOME has a hard quota: when it's full, new files can't be written and apps
+# break mid-session. /sgoinfre has a 30 GB quota, and a folder over 30 GB is
+# wiped on Sunday night. Usage comes from df and quota, which answer in
+# milliseconds; only --disk walks directories.
+
+HOME_WARN_PCT="${HEAL_HOME_WARN_PCT:-85}"
+SGO_WARN_GB="${HEAL_SGO_WARN_GB:-27}"
+GIB=$((1024 * 1024 * 1024))
+
+# home_usage / sgo_usage: "USED_BYTES LIMIT_BYTES", or nothing if unknown.
+home_usage() { df -P -B1 "$HOME" 2>/dev/null | awk 'NR == 2 { print $3, $2 }'; }
+sgo_usage() {
+    # quota reports 1 KiB blocks; a used figure over the quota ends in '*'.
+    timeout 3 quota -w 2>/dev/null | awk '$1 ~ /sgoinfre/ {
+        sub(/\*$/, "", $2); lim = $4 > 0 ? $4 : $3
+        if (lim > 0) print $2 * 1024, lim * 1024 }'
+}
+
+human() { numfmt --to=iec --format='%.1f' "$1"; }
+pct() { echo $(( ($1 * 100 + $2 / 2) / $2 )); }
+
+# usage_line LABEL USED LIMIT
+usage_line() {
+    printf '  %-10s %6s of %6s  (%d%%)\n' "$1" "$(human "$2")" "$(human "$3")" $(pct "$2" "$3")
+}
+
+# disk_warnings: one line per tier past its threshold, nothing otherwise.
+disk_warnings() {
+    local used limit
+    read -r used limit < <(home_usage) || true
+    if [[ -n "${limit:-}" ]] && (( used * 100 >= limit * HOME_WARN_PCT )); then
+        printf '$HOME is %d%% full (%s of %s); when full, nothing can be written.\n' \
+            $(pct "$used" "$limit") "$(human "$used")" "$(human "$limit")"
+    fi
+    used="" limit=""
+    read -r used limit < <(sgo_usage) || true
+    if [[ -n "${limit:-}" ]] && (( used >= SGO_WARN_GB * GIB )); then
+        printf '/sgoinfre holds %s of %s; a folder over 30 GB is wiped Sunday night.\n' \
+            "$(human "$used")" "$(human "$limit")"
+    fi
+}
+
+disk_summary() {
+    local used limit
+    say "disk"
+    if read -r used limit < <(home_usage) && [[ -n "$limit" ]]; then
+        usage_line '$HOME' "$used" "$limit"
+    else
+        printf '  %-10s unknown\n' '$HOME'
+    fi
+    if read -r used limit < <(sgo_usage) && [[ -n "$limit" ]]; then
+        usage_line /sgoinfre "$used" "$limit"
+    else
+        printf '  %-10s unknown (quota gave no /sgoinfre line)\n' /sgoinfre
+    fi
+}
+
+# top_dirs DIR N: the N largest entries directly in DIR, symlinks not
+# followed, with the registry components installed under each.
+top_dirs() {
+    local dir="$1" n="$2" size path base row names
+    declare -A owners=()
+    if [[ "$dir" == "${SGO:-}" ]]; then
+        for row in "${COMPONENTS[@]}"; do
+            parse_component_row "${row%%|*}" || continue
+            [[ -e "$SGO/$C_PATH" ]] || continue
+            base=${C_PATH%%/*}
+            owners[$base]+="${owners[$base]:+, }$C_NAME"
+        done
+    fi
+    while read -r size path; do
+        base=$(basename "$path")
+        names=${owners[$base]:-}
+        printf '  %8s  %s%s\n' "$(human "$size")" "$base" "${names:+  ($names)}"
+    done < <(find "$dir" -mindepth 1 -maxdepth 1 ! -type l -print0 \
+                | xargs -0r du -xs -B1 2>/dev/null | sort -rn | head -n "$n")
+}
+
+disk_report() {
+    disk_summary
+    echo
+    say "largest in \$HOME ($HOME)"
+    top_dirs "$HOME" 10
+    if [[ -n "${SGO:-}" && -d "$SGO" ]]; then
+        echo
+        say "largest in /sgoinfre ($SGO; NFS, this takes ~30 s)"
+        top_dirs "$SGO" 12
+    fi
+    local w; w=$(disk_warnings)
+    if [[ -n "$w" ]]; then
+        echo
+        printf '%s\n' "$w" | sed 's/^/warning: /'
+    fi
+}
+
 # ─── status / report ─────────────────────────────────────────────────────────
 
 print_rows() {
@@ -192,6 +294,7 @@ print_rows() {
 }
 
 status() {
+    disk_summary
     say "manifest: $MANIFEST ($(manifest_entries | wc -l) entries)"
     if is_running; then
         say "a run is in progress; finished so far:"
@@ -207,16 +310,21 @@ status() {
 }
 
 report() {
-    [[ -f "$LAST" ]] || return 0
-    is_running && return 0
-    local failed
-    mapfile -t failed < <(awk -F'\t' '!/^#/ && $1 != 0 { print $4 }' "$LAST")
-    (( ${#failed[@]} )) || return 0
-    local names; names=$(printf '%s, ' "${failed[@]%% *}"); names=${names%, }
-    local y="" r=""
+    local y="" r="" line
     [[ -t 1 ]] && { y=$'\e[33m'; r=$'\e[0m'; }
-    printf '%s42-dev-heal:%s %d failed on login (%s). Run 42-dev-heal --status\n' \
-        "$y" "$r" "${#failed[@]}" "$names"
+    if [[ -f "$LAST" ]] && ! is_running; then
+        local failed
+        mapfile -t failed < <(awk -F'\t' '!/^#/ && $1 != 0 { print $4 }' "$LAST")
+        if (( ${#failed[@]} )); then
+            local names; names=$(printf '%s, ' "${failed[@]%% *}"); names=${names%, }
+            printf '%s42-dev-heal:%s %d failed on login (%s). Run 42-dev-heal --status\n' \
+                "$y" "$r" "${#failed[@]}" "$names"
+        fi
+    fi
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        printf '%s42-dev-heal:%s %s See 42-dev-heal --disk\n' "$y" "$r" "$line"
+    done < <(disk_warnings)
 }
 
 # ─── migrate ─────────────────────────────────────────────────────────────────
@@ -282,6 +390,7 @@ while (( $# )); do
         --failed)       only_failed=1 ;;
         --status)       action=status ;;
         --report)       action=report ;;
+        --disk)         action=disk ;;
         --migrate)      action=migrate ;;
         --ensure-hook)  action=ensure-hook ;;
         -y|--yes)       yes=1 ;;
@@ -298,6 +407,8 @@ case "$action" in
     run)          run_all "$only_failed" ;;
     status)       status ;;
     report)       report ;;
+    disk)         SGO="${BOOTSTRAP_SGO:-$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)}"
+                  disk_report ;;
     migrate)      migrate "$yes" ;;
     ensure-hook)  ensure_hook ;;
 esac
