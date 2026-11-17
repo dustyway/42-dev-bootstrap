@@ -39,16 +39,20 @@ fi
 
 mkdir -p "$UV_TOOL_DIR"
 
-# `--with audioop-lts` works around aider's pydub dep importing the
-# stdlib `audioop` module, which was removed in Python 3.13. uv picks
-# 3.13 by default for tool venvs on this box; audioop-lts is the
-# maintained backport. Drop this once aider/pydub stop importing it.
-EXTRA=(--with audioop-lts)
+# --python 3.13: aider pins scipy 1.15.3, which ships wheels only up to
+# 3.13. With uv's default here (3.14), uv builds scipy from source, which
+# fails for want of a Fortran compiler.
+# --with audioop-lts: aider's pydub dep imports the stdlib `audioop` module,
+# removed in Python 3.13; audioop-lts is the maintained backport. Drop it
+# once aider/pydub stop importing it.
+EXTRA=(--python 3.13 --with audioop-lts)
 
 if [[ -n "$VERSION" ]]; then
     echo "[aider-bootstrap] installing aider-chat==$VERSION"
     uv tool install --force "${EXTRA[@]}" "aider-chat==$VERSION"
-elif ! uv tool list 2>/dev/null | grep -q '^aider-chat '; then
+elif ! uv tool list 2>/dev/null | grep '^aider-chat ' >/dev/null; then
+    # (No grep -q: under pipefail, uv writing past the match into the closed
+    # pipe would read as "not installed".)
     echo "[aider-bootstrap] installing aider-chat (latest)"
     uv tool install "${EXTRA[@]}" aider-chat
 fi

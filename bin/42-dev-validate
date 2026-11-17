@@ -74,7 +74,8 @@ check_bootstrap_lib() {
         local uses_lib=0 own_lookup=0
         grep -Eq '^[[:space:]]*source .*lib/bootstrap\.bash' "$f" && uses_lib=1
         # Any code line (not a comment) naming the sgoinfre root.
-        grep -v '^[[:space:]]*#' "$f" | grep -q '/sgoinfre/goinfre/Perso' && own_lookup=1
+        # (Not grep -q: with pipefail, an early exit can fail the pipeline.)
+        grep -v '^[[:space:]]*#' "$f" | grep '/sgoinfre/goinfre/Perso' >/dev/null && own_lookup=1
         if [[ "$name" == *-bootstrap ]]; then
             total=$((total + 1))
             (( uses_lib )) && converted=$((converted + 1))

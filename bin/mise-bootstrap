@@ -77,13 +77,16 @@ if has_tool elixir && command -v mix >/dev/null 2>&1; then
     # interactively on the next mix deps.get.
     mix local.hex --if-missing --force >/dev/null 2>&1 || true
     mix local.rebar --if-missing --force >/dev/null 2>&1 || true
-    if ! mix archive 2>/dev/null | grep -q '^\* phx_new'; then
+    # grep without -q: -q exits at the first match, and when mix then writes
+    # its trailing line into the closed pipe, pipefail turns that into a
+    # false "missing" (about one run in four), and a needless reinstall.
+    if ! mix archive 2>/dev/null | grep '^\* phx_new' >/dev/null; then
         log "installing phx_new archive"
         mix archive.install hex phx_new --force
     fi
     # Escripts live under the per-version MIX_HOME too (mise puts its
     # escripts/ dir on PATH), so a version bump drops livebook.
-    if ! mix escript 2>/dev/null | grep -q '^\* livebook'; then
+    if ! mix escript 2>/dev/null | grep '^\* livebook' >/dev/null; then
         log "installing livebook escript"
         mix escript.install hex livebook --force
     fi
