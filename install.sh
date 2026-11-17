@@ -9,39 +9,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$HOME/Apps/bin" "$HOME/Apps/etc" "$HOME/Apps/lib"
 
-install -m 0755 "$REPO_ROOT/bin/jb-bootstrap"              "$HOME/Apps/bin/jb-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/mise-bootstrap"            "$HOME/Apps/bin/mise-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/wx-bootstrap"              "$HOME/Apps/bin/wx-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/emacs-bootstrap"           "$HOME/Apps/bin/emacs-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/postgres-bootstrap"        "$HOME/Apps/bin/postgres-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/docker-bootstrap"          "$HOME/Apps/bin/docker-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/docker-build"             "$HOME/Apps/bin/docker-build"
-install -m 0755 "$REPO_ROOT/bin/inotify-tools-bootstrap"   "$HOME/Apps/bin/inotify-tools-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/clangd-bootstrap"          "$HOME/Apps/bin/clangd-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/gh-bootstrap"              "$HOME/Apps/bin/gh-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/ghidra-bootstrap"          "$HOME/Apps/bin/ghidra-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/ocaml-bootstrap"           "$HOME/Apps/bin/ocaml-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/graphviz-bootstrap"        "$HOME/Apps/bin/graphviz-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/ollama-bootstrap"          "$HOME/Apps/bin/ollama-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/aider-bootstrap"           "$HOME/Apps/bin/aider-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/opencode-bootstrap"        "$HOME/Apps/bin/opencode-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/cuda-bootstrap"            "$HOME/Apps/bin/cuda-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/tailscale-bootstrap"       "$HOME/Apps/bin/tailscale-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/tor-browser-bootstrap"     "$HOME/Apps/bin/tor-browser-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/torsocks-bootstrap"        "$HOME/Apps/bin/torsocks-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/actionlint-bootstrap"      "$HOME/Apps/bin/actionlint-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/act-bootstrap"             "$HOME/Apps/bin/act-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/fzf-bootstrap"             "$HOME/Apps/bin/fzf-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/glow-bootstrap"            "$HOME/Apps/bin/glow-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/clang++-libcxx"            "$HOME/Apps/bin/clang++-libcxx"
-install -m 0755 "$REPO_ROOT/bin/repo-bootstrap"            "$HOME/Apps/bin/repo-bootstrap"
-install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sync-elixir-sdk"
-install -m 0755 "$REPO_ROOT/bin/42-dev-install"            "$HOME/Apps/bin/42-dev-install"
-install -m 0755 "$REPO_ROOT/bin/42-dev-uninstall"          "$HOME/Apps/bin/42-dev-uninstall"
-install -m 0755 "$REPO_ROOT/bin/42-dev-validate"           "$HOME/Apps/bin/42-dev-validate"
-install -m 0755 "$REPO_ROOT/bin/42-dev-heal"               "$HOME/Apps/bin/42-dev-heal"
-install -m 0644 "$REPO_ROOT/lib/components.bash"           "$HOME/Apps/lib/components.bash"
-install -m 0644 "$REPO_ROOT/lib/bootstrap.bash"            "$HOME/Apps/lib/bootstrap.bash"
+# Everything in bin/ and lib/: a new script needs no line here.
+for f in "$REPO_ROOT"/bin/*; do
+    install -m 0755 "$f" "$HOME/Apps/bin/$(basename "$f")"
+done
+for f in "$REPO_ROOT"/lib/*.bash; do
+    install -m 0644 "$f" "$HOME/Apps/lib/$(basename "$f")"
+done
 
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
     cp "$REPO_ROOT/etc/npm-globals.txt.example" "$HOME/Apps/etc/npm-globals.txt"

@@ -63,8 +63,38 @@ check_registry() {
     (( missing == 0 )) && ok "component registry"
 }
 
+# Scripts that find /sgoinfre themselves can't be pointed at a scratch
+# directory with BOOTSTRAP_SGO, so testing them touches real installs. Fail on
+# a converted bootstrap that still has its own lookup; list the rest as todo.
+check_bootstrap_lib() {
+    local f name converted=0 total=0 todo=() stale=0
+    for f in "$ROOT"/bin/*; do
+        name=$(basename "$f")
+        [[ "$name" == 42-dev-validate ]] && continue
+        local uses_lib=0 own_lookup=0
+        grep -Eq '^[[:space:]]*source .*lib/bootstrap\.bash' "$f" && uses_lib=1
+        # Any code line (not a comment) naming the sgoinfre root.
+        grep -v '^[[:space:]]*#' "$f" | grep -q '/sgoinfre/goinfre/Perso' && own_lookup=1
+        if [[ "$name" == *-bootstrap ]]; then
+            total=$((total + 1))
+            (( uses_lib )) && converted=$((converted + 1))
+        fi
+        if (( uses_lib && own_lookup )); then
+            bad "$name sources lib/bootstrap.bash but still looks up /sgoinfre itself"
+            stale=1
+        elif (( own_lookup )) && ! grep -q 'BOOTSTRAP_SGO' "$f"; then
+            todo+=("$name")
+        fi
+    done
+    (( stale == 0 )) && ok "lib/bootstrap.bash: $converted of $total bootstraps"
+    if (( ${#todo[@]} )); then
+        printf '[todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): %s\n' "${todo[*]}"
+    fi
+}
+
 check_bash_syntax
 check_install_sources_exist
 check_registry
+check_bootstrap_lib
 
 exit "$fail"

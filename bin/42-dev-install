@@ -23,8 +23,10 @@
 
 set -euo pipefail
 
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[42-dev-install] sgoinfre path not found for $USER" >&2; exit 1; }
+# BOOTSTRAP_SGO points this at a scratch directory for testing, as for the
+# bootstraps (lib/bootstrap.bash).
+SGO="${BOOTSTRAP_SGO:-$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)}"
+[[ -n "$SGO" && -d "$SGO" ]] || { echo "[42-dev-install] sgoinfre path not found for $USER" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"

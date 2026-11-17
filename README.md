@@ -438,11 +438,10 @@ machine shows that machine's last run.
 | `write_desktop_entry NAME` | Write stdin to `~/.local/share/applications/NAME.desktop` and refresh the desktop database |
 | `log`, `die` | Messages prefixed with the script name |
 
-Converted so far: `fzf`, `glow`, `act`, `actionlint`, `gh`, `clangd`,
-`postgres`, `inotify-tools`, `graphviz`, `torsocks`, `tor-browser`, `ghidra`
-and `tailscale`. `fzf-bootstrap` is the shortest example, `ghidra-bootstrap`
-the fullest (two installs, a wrapper and a desktop entry). The other scripts
-don't use the library yet.
+`fzf-bootstrap` is the shortest example, `ghidra-bootstrap` the fullest (two
+installs, a wrapper and a desktop entry). `install.sh` copies everything in
+`bin/` and `lib/`, so a new script needs no other registration; add a
+registry row in `lib/components.bash` if `42-dev-install` should offer it.
 
 To try a bootstrap without touching your real installs, point it at scratch
 directories:
@@ -451,9 +450,15 @@ directories:
 BOOTSTRAP_SGO=/goinfre/$USER/sgo-test HOME=/goinfre/$USER/home-test bin/fzf-bootstrap
 ```
 
-`BOOTSTRAP_SGO` only affects scripts that use the library. The others, and
-`42-dev-uninstall`, still find `/sgoinfre` from `$USER`, even with `HOME`
-changed.
+`42-dev-install` and `42-dev-uninstall` honour `BOOTSTRAP_SGO` too. Scripts
+not yet on the library still find `/sgoinfre` from `$USER`, even with `HOME`
+changed, so running them in a test touches your real installs.
+`bin/42-dev-validate` lists them:
+
+```
+[ok] lib/bootstrap.bash: 13 of 24 bootstraps
+[todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): cuda-bootstrap …
+```
 
 ## mise runtimes
 
