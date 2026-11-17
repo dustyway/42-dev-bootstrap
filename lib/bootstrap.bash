@@ -54,12 +54,17 @@ fetch() {
 # verify_sha256 FILE SUMS [NAME]
 # Check FILE against the entry for NAME (default: FILE's basename) in SUMS, a
 # `sha256sum`-style list ("<hash>  <name>", "<hash> *<name>" and single-space
-# forms all work). Use NAME when the cached file was renamed from the
-# upstream asset name. On a mismatch or a missing entry, FILE and SUMS are
-# deleted so the next run downloads both again.
+# forms all work), or a file holding only the bare hash. Use NAME when the
+# cached file was renamed from the upstream asset name. On a mismatch or a
+# missing entry, FILE and SUMS are deleted so the next run downloads both
+# again.
 verify_sha256() {
     local file="$1" sums="$2" name="${3:-$(basename "$1")}" want got
-    want=$(awk -v n="$name" '{ f = $2; sub(/^\*/, "", f) } f == n { print $1; exit }' "$sums")
+    want=$(awk -v n="$name" '
+        NR == 1 && NF == 1 && $1 ~ /^[0-9a-f]+$/ && length($1) == 64 { bare = $1 }
+        { f = $2; sub(/^\*/, "", f) }
+        f == n { print $1; found = 1; exit }
+        END { if (!found && NR == 1 && bare != "") print bare }' "$sums")
     if [[ -z "$want" ]]; then
         rm -f "$file" "$sums"
         die "no sha256 for $name in $(basename "$sums")"
@@ -89,6 +94,19 @@ for a in json.load(sys.stdin).get("assets", []):
 ' "$asset" <<<"$json")
     [[ "$digest" == sha256:* ]] || die "GitHub has no sha256 digest for $asset in $repo $tag"
     printf '%s  %s\n' "${digest#sha256:}" "$asset" >"$dest"
+}
+
+# apt_download DIR PACKAGE[=VERSION]...
+# Fetch .debs into DIR without root. apt-get checks them against the signed
+# apt index, so no separate checksum is needed. apt-get warns that it can't
+# drop privileges to `_apt` when DIR isn't readable by that user; the
+# download still succeeds.
+apt_download() {
+    local dir="$1"
+    shift
+    log "downloading $* (apt)"
+    mkdir -p "$dir"
+    (cd "$dir" && apt-get download "$@") || die "apt-get download failed: $*"
 }
 
 # installed_version APP_HOME — the version recorded by install_tarball, or "".
@@ -145,6 +163,30 @@ link_launchers() {
         [[ -f "$f" && -x "$f" ]] && link_launcher "$f"
     done
     return 0
+}
+
+# write_launcher NAME
+# Write stdin to ~/bin/NAME as an executable script, for launchers that need
+# environment or arguments a symlink can't carry. Removes the old file first,
+# so an old symlink is replaced rather than written through.
+write_launcher() {
+    local dest="$HOME/bin/$1"
+    mkdir -p "$HOME/bin"
+    rm -f "$dest"
+    cat >"$dest"
+    chmod 0755 "$dest"
+}
+
+# write_desktop_entry NAME
+# Write stdin to ~/.local/share/applications/NAME.desktop and refresh the
+# desktop database. Rewritten every run, so paths follow version switches.
+write_desktop_entry() {
+    local dir="$HOME/.local/share/applications"
+    mkdir -p "$dir"
+    cat >"$dir/$1.desktop"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$dir" >/dev/null 2>&1 || true
+    fi
 }
 
 # link_launcher TARGET [NAME]

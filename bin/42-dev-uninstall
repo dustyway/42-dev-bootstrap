@@ -61,7 +61,7 @@ cleanup_globs_for() {
         emacs)          printf '%s' "$SGO/emacs:$SGO/.cache/emacs-*.tar.gz:$SGO/.cache/emacs-*.tar.gz.sha256" ;;
         clangd)         printf '%s' "$SGO/clangd:$SGO/.cache/clangd-linux-*.zip:$SGO/.cache/clangd-linux-*.zip.sha256" ;;
         wx)             printf '%s' "$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256" ;;
-        tailscale)      printf '%s' "$SGO/tailscale:$SGO/.cache/tailscale_*.tgz" ;;
+        tailscale)      printf '%s' "$SGO/tailscale:$SGO/.cache/tailscale_*.tgz:$SGO/.cache/tailscale_*.tgz.sha256" ;;
         torsocks)       printf '%s' "$SGO/torsocks:$SGO/.cache/torsocks_*.deb:$HOME/bin/torsocks" ;;
         tor-browser)    printf '%s' "$SGO/tor-browser:$SGO/.cache/tor-browser-linux-x86_64-*.tar.xz*:$HOME/bin/tor-browser:$HOME/.local/share/applications/tor-browser.desktop" ;;
         gh)             printf '%s' "$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt" ;;

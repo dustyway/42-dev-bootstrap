@@ -25,19 +25,16 @@
 # Launcher       → ~/bin/tor-browser                                     wrapper
 # Desktop entry  → ~/.local/share/applications/tor-browser.desktop
 # Old versions and their tarballs are removed after a successful switch.
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 FEED="https://aus1.torproject.org/torbrowser/update_3/release/downloads.json"
 ARCHIVE="https://archive.torproject.org/tor-package-archive/torbrowser"
-
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[tor-browser-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
-
 BASE="$SGO/tor-browser"
 CURRENT_MARKER="$BASE/.current-version"
-mkdir -p "$SGO/.cache" "$BASE"
+mkdir -p "$BASE"
 
 # 1. Which version? Offline with something installed → keep what we have.
 VERSION="${1:-}"
@@ -46,39 +43,23 @@ if [[ -z "$VERSION" ]]; then
         | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["version"])') || VERSION=""
 fi
 if [[ -z "$VERSION" ]]; then
-    [[ -s "$CURRENT_MARKER" ]] || { echo "[tor-browser-bootstrap] cannot resolve latest version" >&2; exit 1; }
+    [[ -s "$CURRENT_MARKER" ]] || die "cannot resolve latest version"
     VERSION=$(cat "$CURRENT_MARKER")
-    echo "[tor-browser-bootstrap] update feed unreachable, keeping $VERSION"
+    log "update feed unreachable, keeping $VERSION"
 fi
 
 ASSET="tor-browser-linux-x86_64-${VERSION}.tar.xz"
 APP_HOME="$BASE/$VERSION"
-TARBALL="$SGO/.cache/$ASSET"
-SHAFILE="$TARBALL.sha256"
-VERSION_MARKER="$APP_HOME/.tor-browser-bootstrap-version"
+TARBALL="$CACHE/$ASSET"
+SUMS="$TARBALL.sha256"
 
 # 2. Download, verify, extract.
-installed=""
-[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
-
-if [[ ! -x "$APP_HOME/Browser/start-tor-browser" || "$installed" != "$VERSION" ]]; then
-    if [[ ! -s "$TARBALL" ]]; then
-        echo "[tor-browser-bootstrap] downloading $ASSET"
-        curl -fL --retry 3 -o "$TARBALL" "$ARCHIVE/$VERSION/$ASSET"
-    fi
-    curl -fsSL "$ARCHIVE/$VERSION/sha256sums-signed-build.txt" \
-        | grep "  ${ASSET}\$" > "$SHAFILE" \
-        || { echo "[tor-browser-bootstrap] no checksum for $ASSET" >&2; exit 1; }
-    (cd "$(dirname "$TARBALL")" && sha256sum -c --quiet "$(basename "$SHAFILE")") \
-        || { echo "[tor-browser-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
-
-    echo "[tor-browser-bootstrap] installing Tor Browser $VERSION to $APP_HOME"
-    rm -rf "$APP_HOME.tmp" "$APP_HOME"
-    mkdir -p "$APP_HOME.tmp"
-    # Tarball top-level dir is tor-browser/; strip it.
-    tar -xJf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
-    mv "$APP_HOME.tmp" "$APP_HOME"
-    printf '%s' "$VERSION" > "$VERSION_MARKER"
+if needs_install "$APP_HOME" "$VERSION" Browser/start-tor-browser; then
+    fetch "$ARCHIVE/$VERSION/$ASSET" "$TARBALL"
+    fetch "$ARCHIVE/$VERSION/sha256sums-signed-build.txt" "$SUMS"
+    verify_sha256 "$TARBALL" "$SUMS"
+    # Top-level tor-browser/ stripped.
+    install_tarball "$TARBALL" "$APP_HOME" "$VERSION" --strip-components=1
 fi
 
 # 3. Disable the built-in updater (rewritten every run, it's tiny).
@@ -91,28 +72,22 @@ printf '%s' "$VERSION" > "$CURRENT_MARKER"
 for old in "$BASE"/*/; do
     old=${old%/}
     [[ "$(basename "$old")" == "$VERSION" ]] && continue
-    echo "[tor-browser-bootstrap] removing old $old"
+    log "removing old $old"
     rm -rf "$old"
 done
-for old in "$SGO"/.cache/tor-browser-linux-x86_64-*.tar.xz*; do
-    [[ -e "$old" && "$old" != "$TARBALL" && "$old" != "$SHAFILE" ]] && rm -f "$old"
+for old in "$CACHE"/tor-browser-linux-x86_64-*.tar.xz*; do
+    [[ -e "$old" && "$old" != "$TARBALL" && "$old" != "$SUMS" ]] && rm -f "$old"
 done
 
 # 5. Launcher. A wrapper, not a symlink: start-tor-browser finds its install
 #    dir from its own path. --detach returns the terminal right away.
-mkdir -p "$HOME/bin"
-rm -f "$HOME/bin/tor-browser"
-cat > "$HOME/bin/tor-browser" <<WRAP
+write_launcher tor-browser <<WRAP
 #!/usr/bin/env bash
 exec "$APP_HOME/Browser/start-tor-browser" --detach "\$@"
 WRAP
-chmod 0755 "$HOME/bin/tor-browser"
 
-# 6. Desktop entry, same approach as ghidra-bootstrap (absolute paths,
-#    rewritten each run so a version switch heals).
-desktop_dir="$HOME/.local/share/applications"
-mkdir -p "$desktop_dir"
-cat > "$desktop_dir/tor-browser.desktop" <<DESK
+# 6. Desktop entry.
+write_desktop_entry tor-browser <<DESK
 [Desktop Entry]
 Name=Tor Browser
 GenericName=Web Browser
@@ -125,5 +100,3 @@ Categories=Network;WebBrowser;
 StartupNotify=true
 StartupWMClass=Tor Browser
 DESK
-command -v update-desktop-database >/dev/null 2>&1 \
-  && update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true

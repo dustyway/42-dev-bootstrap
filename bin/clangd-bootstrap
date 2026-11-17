@@ -59,13 +59,9 @@ fi
 # (e.g. conda:gxx's g++ 16) live under MISE_DATA_DIR, and clangd only asks a
 # compiler for its system include paths when --query-driver allows it.
 # Otherwise clangd falls back to the system GCC 12 headers and reports
-# C++23 headers such as <print> as missing. rm first: a plain redirect would
-# follow an old symlink into the install.
+# C++23 headers such as <print> as missing.
 MISE_DATA="${MISE_DATA_DIR:-$SGO/mise-data}"
-mkdir -p "$HOME/bin"
-rm -f "$HOME/bin/clangd"
-cat > "$HOME/bin/clangd" <<WRAPPER
+write_launcher clangd <<WRAPPER
 #!/bin/sh
 exec "$APP_HOME/bin/clangd" --query-driver="$MISE_DATA/**" "\$@"
 WRAPPER
-chmod +x "$HOME/bin/clangd"

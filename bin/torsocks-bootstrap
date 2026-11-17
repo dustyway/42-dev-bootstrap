@@ -4,14 +4,14 @@
 #
 # torsocks runs any program with its network calls sent through Tor's SOCKS
 # port (LD_PRELOAD of libtorsocks.so), e.g. `torsocks ssh user@xxx.onion`.
-# Same trick as graphviz-bootstrap: `apt-get download` + `dpkg-deb -x` into
-# a private prefix, no root needed. The package's `torsocks` script has its
-# libdir hard-coded to /usr, so the extracted copy gets its prefix rewritten.
+# Same approach as graphviz-bootstrap: `apt-get download` + `dpkg-deb -x`
+# into a private prefix. The package's `torsocks` script has /usr hard-coded
+# as its prefix, so the extracted copy is rewritten.
 #
-# There is no system tor on the cluster, so the bundled torsocks.conf is
-# rewritten to TorPort 9150 — the SOCKS port of Tor Browser (see
-# tor-browser-bootstrap), which must be open while you use torsocks. For a
-# tor on 9050 instead: TORSOCKS_TOR_PORT=9050 torsocks …
+# There is no system tor on the cluster, so torsocks.conf is rewritten to
+# TorPort 9150, the SOCKS port of Tor Browser (see tor-browser-bootstrap),
+# which must be open while you use torsocks. For a tor on 9050 instead:
+# TORSOCKS_TOR_PORT=9050 torsocks …
 #
 # Usage:  torsocks-bootstrap [VERSION]
 #   VERSION must match a torsocks package version in the apt index
@@ -22,50 +22,32 @@
 # Cached .deb  → $SGO/.cache/torsocks_<version>_amd64.deb
 # Wrapper      → ~/bin/torsocks             (sets TORSOCKS_CONF_FILE)
 # Man page     → `man -l $SGO/torsocks/<version>/usr/share/man/man1/torsocks.1.gz`
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 VERSION="${1:-2.3.0-3}"
 TOR_PORT=9150
-
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[torsocks-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
-
 APP_HOME="$SGO/torsocks/${VERSION}"
-DEB="$SGO/.cache/torsocks_${VERSION}_amd64.deb"
-VERSION_MARKER="$APP_HOME/.torsocks-bootstrap-version"
+DEB="$CACHE/torsocks_${VERSION}_amd64.deb"
 
-mkdir -p "$SGO/.cache" "$SGO/torsocks"
-
-installed=""
-[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
-
-if [[ ! -x "$APP_HOME/usr/bin/torsocks" || "$installed" != "$VERSION" ]]; then
-    if [[ ! -s "$DEB" ]]; then
-        echo "[torsocks-bootstrap] downloading torsocks $VERSION"
-        # apt-get download verifies the .deb against the signed apt index.
-        (cd "$SGO/.cache" && apt-get download "torsocks=${VERSION}")
-    fi
-    echo "[torsocks-bootstrap] installing torsocks $VERSION to $APP_HOME"
-    rm -rf "$APP_HOME.tmp" "$APP_HOME"
+if needs_install "$APP_HOME" "$VERSION" usr/bin/torsocks; then
+    [[ -s "$DEB" ]] || apt_download "$CACHE" "torsocks=${VERSION}"
+    install_begin "$APP_HOME" "$VERSION"
     dpkg-deb -x "$DEB" "$APP_HOME.tmp"
-    mv "$APP_HOME.tmp" "$APP_HOME"
-    printf '%s' "$VERSION" > "$VERSION_MARKER"
+    install_commit "$APP_HOME" "$VERSION"
 fi
 
-# Rewritten every run so an sgoinfre path drift heals.
+# Rewritten every run so an sgoinfre path change heals.
 # 1. The script looks for libtorsocks.so under $prefix/lib/…
 sed -i "s#^prefix=.*#prefix=$APP_HOME/usr#" "$APP_HOME/usr/bin/torsocks"
 # 2. Tor Browser's SOCKS port instead of the system tor's 9050.
 sed -i "s#^TorPort .*#TorPort $TOR_PORT#" "$APP_HOME/etc/tor/torsocks.conf"
 
 # 3. Wrapper: the script would read /etc/tor/torsocks.conf otherwise.
-mkdir -p "$HOME/bin"
-rm -f "$HOME/bin/torsocks"
-cat > "$HOME/bin/torsocks" <<WRAP
+write_launcher torsocks <<WRAP
 #!/usr/bin/env bash
 export TORSOCKS_CONF_FILE="\${TORSOCKS_CONF_FILE:-$APP_HOME/etc/tor/torsocks.conf}"
 exec "$APP_HOME/usr/bin/torsocks" "\$@"
 WRAP
-chmod 0755 "$HOME/bin/torsocks"

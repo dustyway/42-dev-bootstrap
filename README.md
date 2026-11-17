@@ -249,6 +249,8 @@ goes through a SOCKS5 proxy on `127.0.0.1:1055`
 (`HTTP_PROXY=http://127.0.0.1:1056`) for clients without SOCKS support. The
 `~/bin/tailscale` wrapper passes the socket path, so `tailscale up` and
 `tailscale status` work unchanged. Auth state lives in `~/.config/tailscale/`.
+Each run also starts the daemon (`~/bin/tailscale-serve`) unless it's already
+up; `TAILSCALE_NO_START=1` installs without starting it.
 
 With a self-hosted control server (Headscale), the first `tailscale up` on a
 machine needs `--login-server=https://headscale.example.com`; otherwise it
@@ -424,18 +426,23 @@ machine shows that machine's last run.
 | Helper | Does |
 |---|---|
 | `fetch URL DEST` | Download to `DEST` unless it's already cached; goes through `DEST.part`, so an interrupted download is never reused |
-| `verify_sha256 FILE SUMS [NAME]` | Check `FILE` against its line in a `sha256sum`-style list; on a mismatch, delete both so the next run downloads them again |
+| `verify_sha256 FILE SUMS [NAME]` | Check `FILE` against its line in a `sha256sum`-style list, or against a file holding only the hash; on a mismatch, delete both so the next run downloads them again |
 | `fetch_github_digest REPO TAG ASSET DEST` | For releases without a checksums file: write the sha256 GitHub records for `ASSET` to `DEST`, for `verify_sha256` |
+| `apt_download DIR PKG[=VER]…` | Fetch `.debs` without root (`apt-get download`, checked against the signed apt index), to unpack with `dpkg-deb -x` |
 | `needs_install APP_HOME VERSION BIN` | True if `BIN` is missing or another version is installed |
 | `install_tarball TARBALL APP_HOME VERSION [TAR_ARGS…]` | Extract into `APP_HOME.tmp`, record the version, swap it in |
 | `install_begin` / `install_commit APP_HOME VERSION` | The same swap for layouts `install_tarball` can't handle: fill `APP_HOME.tmp` in between (see `clangd-bootstrap`) |
 | `link_launcher TARGET [NAME]` | Symlink `~/bin/NAME` to `TARGET` |
 | `link_launchers DIR` | Symlink every executable in `DIR` into `~/bin` |
+| `write_launcher NAME` | Write stdin to `~/bin/NAME` as an executable wrapper script, for launchers that need environment or arguments |
+| `write_desktop_entry NAME` | Write stdin to `~/.local/share/applications/NAME.desktop` and refresh the desktop database |
 | `log`, `die` | Messages prefixed with the script name |
 
 Converted so far: `fzf`, `glow`, `act`, `actionlint`, `gh`, `clangd`,
-`postgres` and `inotify-tools`. `fzf-bootstrap` is the shortest example. The
-other scripts don't use the library yet.
+`postgres`, `inotify-tools`, `graphviz`, `torsocks`, `tor-browser`, `ghidra`
+and `tailscale`. `fzf-bootstrap` is the shortest example, `ghidra-bootstrap`
+the fullest (two installs, a wrapper and a desktop entry). The other scripts
+don't use the library yet.
 
 To try a bootstrap without touching your real installs, point it at scratch
 directories:
