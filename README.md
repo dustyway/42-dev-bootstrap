@@ -1,8 +1,9 @@
 # 42-dev-bootstrap
 
 Scripts that install JetBrains IDEs, Emacs, language runtimes and other tools
-on the 42 school cluster machines. They run on every login, do nothing if
-everything is in place, and reinstall whatever a storage wipe removed.
+on the 42 school cluster machines. `42-dev-heal` runs them on every login;
+they do nothing if everything is in place, and reinstall whatever a storage
+wipe removed.
 
 ## Why
 
@@ -297,11 +298,11 @@ torsocks curl http://xxx.onion
 Clones a repository onto `/goinfre` on login if it's missing (default
 `/goinfre/$USER/<repo-name>`). An existing checkout is left alone and never
 pulled, since it may have uncommitted work. SSH clones use `BatchMode`, so a
-missing key fails instead of waiting for a passphrase. One `~/.zprofile` line
+missing key fails instead of waiting for a passphrase. One heal manifest line
 per repository:
 
 ```sh
-(nohup ~/Apps/bin/repo-bootstrap git@github.com:you/yourrepo.git &>/dev/null &)
+repo-bootstrap git@github.com:you/yourrepo.git
 ```
 
 ### `jb-sync-elixir-sdk`
@@ -326,17 +327,90 @@ cat shell/profile.snippet >> ~/.profile
 cat shell/zshrc.snippet >> ~/.zshrc
 ```
 
-Add the bootstraps you want to `~/.zprofile`. They run in the background so
-login isn't blocked:
+Then choose what reinstalls on login. Either pick components in
+`42-dev-install` ("install+self-heal"), or list them in the
+[heal manifest](#42-dev-heal) and add the login hook:
 
 ```sh
-nohup $HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & disown
-nohup $HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
-nohup $HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
-nohup $HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
-nohup $HOME/Apps/bin/tor-browser-bootstrap &>/dev/null & disown
-nohup $HOME/Apps/bin/docker-bootstrap &>/dev/null & disown
+42-dev-heal --ensure-hook
 ```
+
+Coming from an older setup with one `(nohup ~/Apps/bin/<x>-bootstrap &>/dev/null &)`
+line per tool in `~/.zprofile`? `42-dev-heal --migrate` moves those lines into
+the manifest, comments out the originals and adds the hook. It lists the
+changes and asks first.
+
+## Managing components
+
+`lib/components.bash` is the registry of everything the bootstraps can
+install: name, bootstrap command, install path on `/sgoinfre` and a short
+description. Three commands work from it.
+
+### `42-dev-install`
+
+An fzf picker over the registry that shows each component's install state,
+size, and whether it reinstalls on login. Enter on a row offers:
+
+- **install**: run the bootstrap once.
+- **install+self-heal**: run it and add it to the heal manifest, so it comes
+  back after a wipe.
+
+`42-dev-install --list` prints the same table without the picker. fzf comes
+from `fzf-bootstrap`.
+
+### `42-dev-uninstall`
+
+The reverse, with the same picker. Each row shows how much space removing it
+frees. Enter offers:
+
+- **cleanup**: delete the files only. If the component is in the manifest,
+  the next login reinstalls it, which is a cheap way to repair a broken install
+  or free space for one session.
+- **uninstall**: delete the files and comment out its manifest line.
+
+Launcher symlinks in `~/bin` and `.desktop` entries pointing into the removed
+directories go too. Non-interactive forms: `42-dev-uninstall <name>
+[--uninstall] [-y]`, `--all-safe` for every reinstallable component, and
+`--list` for a table with the reclaimable total. Components marked `DATA`
+(IDE config, database data) have no bootstrap to restore them, and the
+listing says so.
+
+### `42-dev-heal`
+
+Reinstalls what's missing on login. `~/Apps/etc/heal.list` holds one command
+from `~/Apps/bin` per line; `#` starts a comment:
+
+```sh
+mise-bootstrap
+emacs-bootstrap
+jb-bootstrap IIU KronicDeth/intellij-elixir
+tailscale-bootstrap
+repo-bootstrap git@github.com:you/yourrepo.git
+```
+
+A single `~/.zprofile` line runs it in the background, so login isn't
+blocked:
+
+```sh
+(nohup ~/Apps/bin/42-dev-heal &>/dev/null &)
+```
+
+It runs three entries at a time (`-j N`), each with a two-hour timeout
+(`HEAL_TIMEOUT`), stdin closed and its own log in
+`/goinfre/$USER/42-dev-heal/logs/`. A lock stops overlapping runs on the same
+machine. The `zshrc.snippet` line `42-dev-heal --report` prints one line in
+new terminals when the last run had failures, and nothing otherwise.
+
+| Command | Does |
+|---|---|
+| `42-dev-heal` | Run every manifest entry |
+| `42-dev-heal --status` | Result, duration and log path of each entry from the last run |
+| `42-dev-heal --failed` | Run again only what failed |
+| `42-dev-heal --ensure-hook` | Create the manifest and add the `~/.zprofile` line if missing |
+| `42-dev-heal --migrate` | Move old `(nohup ~/Apps/bin/<x> &>/dev/null &)` lines from the shell init files into the manifest and comment them out |
+
+Run state lives on `/goinfre`, so it's per machine: `--status` on another
+machine shows that machine's last run.
 
 ## mise runtimes
 

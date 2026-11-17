@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+# 42-dev-heal — run the bootstraps listed in the heal manifest. This is the
+# login-time self-heal: one ~/.zprofile line runs it, and it runs the rest.
+#
+# The manifest (~/Apps/etc/heal.list, override with HEAL_MANIFEST) holds one
+# command per line, looked up in ~/Apps/bin:
+#     mise-bootstrap
+#     emacs-bootstrap
+#     jb-bootstrap WS KronicDeth/intellij-elixir
+# Blank lines and lines starting with # are skipped. Arguments are split on
+# whitespace; there is no quoting.
+#
+# Usage:
+#   42-dev-heal                 run every manifest entry (what the login hook runs)
+#   42-dev-heal --failed        run only the entries that failed last time
+#   42-dev-heal --status        last run: result, duration and log of each entry
+#   42-dev-heal --report        one line if the last run had failures, else
+#                               nothing (called from ~/.zshrc)
+#   42-dev-heal --migrate [-y]  move `(nohup ~/Apps/bin/<x> … &)` lines from the
+#                               shell init files into the manifest
+#   42-dev-heal --ensure-hook   create the manifest and add the login hook to
+#                               ~/.zprofile if they're missing
+#   -j N                        entries run in parallel (default 3, or HEAL_JOBS)
+#
+# Each entry runs with stdin closed, a timeout (HEAL_TIMEOUT seconds, default
+# 7200) and its own log in /goinfre/$USER/42-dev-heal/logs/. A lock stops two
+# runs on the same machine from overlapping. Exits 1 if any entry failed.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
+[[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
+[[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-heal] components registry not found" >&2; exit 1; }
+source "$COMPONENTS_LIB"
+
+MANIFEST="$HEAL_MANIFEST"
+BIN="$HOME/Apps/bin"
+STATE="${HEAL_STATE:-/goinfre/$USER/42-dev-heal}"
+LOGS="$STATE/logs"
+LAST="$STATE/last-run"
+PARTIAL="$STATE/current-run"
+LOCK="$STATE/lock"
+JOBS="${HEAL_JOBS:-3}"
+TIMEOUT="${HEAL_TIMEOUT:-7200}"
+
+INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
+HOOK_LINE='(nohup ~/Apps/bin/42-dev-heal &>/dev/null &)'
+# Old-style login lines: `(nohup ~/Apps/bin/<cmd> <args> &>/dev/null &)` or
+# `nohup $HOME/Apps/bin/<cmd> <args> &>/dev/null & disown`.
+LEGACY_RE='^[[:space:]]*\(?[[:space:]]*nohup[[:space:]]+"?(~|\$HOME|\$\{HOME\})/Apps/bin/([A-Za-z0-9._+-]+)"?([^&]*)&>[[:space:]]*/dev/null'
+
+say() { printf '[42-dev-heal] %s\n' "$*"; }
+die() { say "$*" >&2; exit 1; }
+
+# ─── manifest ────────────────────────────────────────────────────────────────
+
+seed_manifest() {
+    [[ -f "$MANIFEST" ]] && return 0
+    mkdir -p "$(dirname "$MANIFEST")"
+    cat >"$MANIFEST" <<'EOF'
+# 42-dev-heal manifest: one command per line, run from ~/Apps/bin on every
+# login by 42-dev-heal. Lines starting with # are skipped. Examples:
+#
+#   mise-bootstrap
+#   emacs-bootstrap
+#   jb-bootstrap WS KronicDeth/intellij-elixir
+#   repo-bootstrap git@github.com:you/yourrepo.git
+#
+# 42-dev-install adds lines here ("install+self-heal"); 42-dev-uninstall
+# comments them out ("uninstall").
+EOF
+    say "created $MANIFEST"
+}
+
+# Manifest entries, one per line: comments dropped, whitespace collapsed,
+# duplicates removed.
+manifest_entries() {
+    [[ -f "$MANIFEST" ]] || return 0
+    local line seen=$'\n' w
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+        read -ra w <<<"$line"
+        line="${w[*]}"
+        [[ "$seen" == *$'\n'"$line"$'\n'* ]] && continue
+        seen+="$line"$'\n'
+        printf '%s\n' "$line"
+    done <"$MANIFEST"
+}
+
+ensure_hook() {
+    seed_manifest
+    local f="$HOME/.zprofile"
+    if [[ -f "$f" ]] && grep -Eq '^[[:space:]]*[^#[:space:]].*Apps/bin/42-dev-heal' "$f"; then
+        return 0
+    fi
+    if [[ -s "$f" ]] && [[ "$(tail -c1 "$f" | od -An -c | tr -d ' ')" != '\n' ]]; then
+        printf '\n' >>"$f"
+    fi
+    printf '%s\n' "$HOOK_LINE" >>"$f"
+    say "added login hook to $f"
+}
+
+# ─── run ─────────────────────────────────────────────────────────────────────
+
+slug() { local s="${1//[^A-Za-z0-9._+-]/_}"; printf '%s' "${s:0:80}"; }
+
+is_running() { [[ -e "$LOCK" ]] && ! flock -n "$LOCK" true 2>/dev/null; }
+
+result_word() {
+    case "$1" in
+        0)       echo "ok" ;;
+        124|137) echo "timeout" ;;
+        127)     echo "missing" ;;
+        *)       echo "FAIL($1)" ;;
+    esac
+}
+
+# Run one entry in the background job; append "rc<TAB>secs<TAB>log<TAB>line".
+run_one() {
+    local line="$1" argv log start=$SECONDS rc=0
+    read -ra argv <<<"$line"
+    log="$LOGS/$(slug "$line").log"
+    {
+        printf '# %s  %s\n' "$(date '+%F %T')" "$line"
+        if [[ ! "${argv[0]}" =~ ^[A-Za-z0-9._+-]+$ || ! -x "$BIN/${argv[0]}" ]]; then
+            echo "not an executable in $BIN: ${argv[0]}"
+            rc=127
+        else
+            # 9>&- : daemons a bootstrap starts (tailscaled, ollama) must not
+            # inherit the lock, or every later run would think one is active.
+            timeout --kill-after=30 "$TIMEOUT" "$BIN/${argv[0]}" "${argv[@]:1}" </dev/null 9>&- || rc=$?
+        fi
+    } >"$log" 2>&1
+    printf '%s\t%s\t%s\t%s\n' "$rc" "$((SECONDS - start))" "$log" "$line" >>"$PARTIAL"
+    printf '[42-dev-heal] %-8s %5ss  %s\n' "$(result_word "$rc")" "$((SECONDS - start))" "$line"
+}
+
+run_all() {
+    local only_failed="$1" entries=() line
+    mkdir -p "$LOGS"
+    exec 9>"$LOCK"
+    flock -n 9 || { say "a run is already in progress on this machine"; exit 0; }
+
+    if (( only_failed )); then
+        [[ -f "$LAST" ]] || die "no previous run recorded in $STATE"
+        mapfile -t entries < <(awk -F'\t' '!/^#/ && $1 != 0 { print $4 }' "$LAST")
+        (( ${#entries[@]} )) || { say "nothing failed in the last run"; return 0; }
+        # Keep the earlier successes so --status still shows the whole set.
+        awk -F'\t' '!/^#/ && $1 == 0' "$LAST" >"$PARTIAL"
+    else
+        mapfile -t entries < <(manifest_entries)
+        (( ${#entries[@]} )) || { say "nothing to do: $MANIFEST has no entries"; return 0; }
+        rm -f "$LOGS"/*.log
+        : >"$PARTIAL"
+    fi
+
+    local started; started=$(date '+%F %T')
+    say "${#entries[@]} entries, $JOBS at a time, logs in $LOGS"
+    local running=0
+    for line in "${entries[@]}"; do
+        if (( running >= JOBS )); then
+            wait -n || true
+            running=$((running - 1))
+        fi
+        run_one "$line" &
+        running=$((running + 1))
+    done
+    wait
+
+    { printf '# %s .. %s\n' "$started" "$(date '+%F %T')"; cat "$PARTIAL"; } >"$LAST.tmp"
+    mv "$LAST.tmp" "$LAST"
+    rm -f "$PARTIAL"
+
+    local failed; failed=$(awk -F'\t' '!/^#/ && $1 != 0' "$LAST" | wc -l)
+    if (( failed )); then
+        say "$failed failed; see 42-dev-heal --status"
+        return 1
+    fi
+    say "all ok"
+}
+
+# ─── status / report ─────────────────────────────────────────────────────────
+
+print_rows() {
+    local rc secs log line
+    while IFS=$'\t' read -r rc secs log line; do
+        [[ "$rc" == \#* || -z "$rc" ]] && continue
+        printf '  %-8s %6ss  %s\n' "$(result_word "$rc")" "$secs" "$line"
+        [[ "$rc" != 0 ]] && printf '  %-8s %6s   log: %s\n' "" "" "$log"
+    done <"$1"
+}
+
+status() {
+    say "manifest: $MANIFEST ($(manifest_entries | wc -l) entries)"
+    if is_running; then
+        say "a run is in progress; finished so far:"
+        [[ -f "$PARTIAL" ]] && print_rows "$PARTIAL"
+        echo
+    fi
+    if [[ ! -f "$LAST" ]]; then
+        say "no finished run recorded on this machine ($STATE)"
+        return 0
+    fi
+    say "last run $(head -n1 "$LAST" | sed 's/^# //')"
+    print_rows "$LAST"
+}
+
+report() {
+    [[ -f "$LAST" ]] || return 0
+    is_running && return 0
+    local failed
+    mapfile -t failed < <(awk -F'\t' '!/^#/ && $1 != 0 { print $4 }' "$LAST")
+    (( ${#failed[@]} )) || return 0
+    local names; names=$(printf '%s, ' "${failed[@]%% *}"); names=${names%, }
+    local y="" r=""
+    [[ -t 1 ]] && { y=$'\e[33m'; r=$'\e[0m'; }
+    printf '%s42-dev-heal:%s %d failed on login (%s). Run 42-dev-heal --status\n' \
+        "$y" "$r" "${#failed[@]}" "$names"
+}
+
+# ─── migrate ─────────────────────────────────────────────────────────────────
+
+migrate() {
+    local yes="$1" file n text w recs=()
+    for file in "${INIT_FILES[@]}"; do
+        [[ -f "$file" ]] || continue
+        n=0
+        while IFS= read -r text || [[ -n "$text" ]]; do
+            n=$((n + 1))
+            [[ "$text" =~ $LEGACY_RE ]] || continue
+            [[ "${BASH_REMATCH[2]}" == 42-dev-heal ]] && continue
+            read -ra w <<<"${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+            recs+=("$file"$'\t'"$n"$'\t'"${w[*]}")
+        done <"$file"
+    done
+
+    if (( ${#recs[@]} == 0 )); then
+        say "no old-style login lines found"
+        ensure_hook
+        return 0
+    fi
+
+    local rec f l cmd
+    echo "Will move these login lines into $MANIFEST and comment them out:"
+    for rec in "${recs[@]}"; do
+        IFS=$'\t' read -r f l cmd <<<"$rec"
+        printf '  %s:%s  →  %s\n' "$f" "$l" "$cmd"
+    done
+    echo "and add to ~/.zprofile (if missing):"
+    echo "  $HOOK_LINE"
+    if (( ! yes )); then
+        echo
+        read -r -p "Proceed? [y/N] " ans
+        [[ "$ans" =~ ^[Yy]$ ]] || { say "aborted"; return 1; }
+    fi
+
+    seed_manifest
+    local existing; existing=$'\n'$(manifest_entries)$'\n'
+    for rec in "${recs[@]}"; do
+        IFS=$'\t' read -r f l cmd <<<"$rec"
+        [[ "$existing" == *$'\n'"$cmd"$'\n'* ]] && continue
+        printf '%s\n' "$cmd" >>"$MANIFEST"
+        existing+="$cmd"$'\n'
+    done
+
+    # Back to front, so line numbers within a file stay valid.
+    local prefix="# [42-dev-heal migrated $(date +%Y-%m-%d)] " i
+    for (( i = ${#recs[@]} - 1; i >= 0; i-- )); do
+        IFS=$'\t' read -r f l cmd <<<"${recs[i]}"
+        sed -i --follow-symlinks "${l}s|^|${prefix}|" "$f"
+    done
+    say "moved ${#recs[@]} line(s) into $MANIFEST"
+    ensure_hook
+}
+
+# ─── args ────────────────────────────────────────────────────────────────────
+
+action=run only_failed=0 yes=0
+while (( $# )); do
+    case "$1" in
+        --failed)       only_failed=1 ;;
+        --status)       action=status ;;
+        --report)       action=report ;;
+        --migrate)      action=migrate ;;
+        --ensure-hook)  action=ensure-hook ;;
+        -y|--yes)       yes=1 ;;
+        -j)             shift; JOBS="${1:-}" ;;
+        -j*)            JOBS="${1#-j}" ;;
+        -h|--help)      sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)              die "unknown argument: $1 (see --help)" ;;
+    esac
+    shift
+done
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive number"
+
+case "$action" in
+    run)          run_all "$only_failed" ;;
+    status)       status ;;
+    report)       report ;;
+    migrate)      migrate "$yes" ;;
+    ensure-hook)  ensure_hook ;;
+esac

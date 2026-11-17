@@ -2,8 +2,10 @@
 # 42-dev-uninstall — list & uninstall components installed by 42-dev-bootstrap.
 #
 # Two removal modes:
-#   uninstall     remove files AND comment out the matching `*-bootstrap`
-#                 line(s) in shell init, so next login does NOT bring it back
+#   uninstall     remove files AND comment out the matching line(s) in the
+#                 heal manifest (~/Apps/etc/heal.list) and any old-style
+#                 `*-bootstrap` line in shell init, so next login does NOT
+#                 bring it back
 #   cleanup mode  remove files only — components whose init line is intact
 #                 will be re-downloaded on next login
 #
@@ -27,8 +29,9 @@
 # next login) or "DATA" (user data, no bootstrap restores it).
 #
 # The "Login" column in the listing shows whether next login will reinstall
-# the component automatically — detected by grepping ~/.zprofile, ~/.profile,
-# ~/.zshrc, ~/.bashrc, ~/.bash_profile for the matching `<x>-bootstrap` call.
+# the component automatically — detected by grepping the heal manifest and
+# ~/.zprofile, ~/.profile, ~/.zshrc, ~/.bashrc, ~/.bash_profile for the
+# matching `<x>-bootstrap` call.
 #
 # Shim detection is dynamic: walks ~/bin, ~/.local/bin, and desktop entries,
 # resolves symlinks and greps wrapper scripts for paths under the doomed dir,
@@ -39,13 +42,15 @@ set -euo pipefail
 SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
 [[ -z "$SGO" ]] && { echo "[42-dev-uninstall] sgoinfre path not found for $USER" >&2; exit 1; }
 
-INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-uninstall] components registry not found" >&2; exit 1; }
 source "$COMPONENTS_LIB"
+
+# The heal manifest first, then shell init files that may still hold
+# old-style login lines (see 42-dev-heal --migrate).
+INIT_FILES=("$HEAL_MANIFEST" "$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
 
 # name | path globs (colon-separated) | class | restore_pattern (ERE) | note
 # restore_pattern = "" means nothing in shell init restores it.
@@ -252,7 +257,7 @@ comment_out_init_lines() {
         local sorted; sorted=$(echo "${by_file[$file]}" | tr ' ' '\n' | sort -rn | tr '\n' ' ')
         for line in $sorted; do
             # Prepend prefix to that specific line.
-            sed -i "${line}s|^|${prefix}|" "$file"
+            sed -i --follow-symlinks "${line}s|^|${prefix}|" "$file"
         done
         echo "[42-dev-uninstall] commented out $(echo "${by_file[$file]}" | wc -w) line(s) in $file"
     done

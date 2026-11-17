@@ -9,6 +9,8 @@
 #                                         Enter         ask for the highlighted row:
 #                                                         Install
 #                                                         Install + self-heal on login
+#                                                           (adds it to ~/Apps/etc/heal.list,
+#                                                           which 42-dev-heal runs on login)
 #                                                         Abort
 #                                         Esc           quit
 #   42-dev-install --list               text table instead of TUI
@@ -24,13 +26,15 @@ set -euo pipefail
 SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
 [[ -z "$SGO" ]] && { echo "[42-dev-install] sgoinfre path not found for $USER" >&2; exit 1; }
 
-INIT_FILES=("$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPONENTS_LIB="$SCRIPT_DIR/../lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || COMPONENTS_LIB="$HOME/Apps/lib/components.bash"
 [[ -f "$COMPONENTS_LIB" ]] || { echo "[42-dev-install] components registry not found" >&2; exit 1; }
 source "$COMPONENTS_LIB"
+
+# Where a login-time run can come from: the heal manifest, plus old-style
+# `(nohup ~/Apps/bin/<x>-bootstrap &)` lines not yet moved by 42-dev-heal --migrate.
+INIT_FILES=("$HEAL_MANIFEST" "$HOME/.zprofile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile")
 
 parse_row() { parse_component_row "$@"; }
 
@@ -70,26 +74,19 @@ init_match_count() {
     echo "$count"
 }
 
-# Build the self-heal line we'd add to ~/.zprofile for a given bootstrap_cmd.
-# Format matches the existing entries (subshell + nohup, detached).
-self_heal_line_for() {
-    local cmd="$1"
-    printf '(nohup ~/Apps/bin/%s &>/dev/null &)' "$cmd"
-}
-
-# Append the self-heal line to ~/.zprofile if not already present (anywhere
-# in any init file). Returns 0 if appended, 1 if a matching active line is
-# already there.
+# Add the bootstrap command to the heal manifest unless an active line for it
+# exists already (in the manifest or an old-style init line), and make sure
+# the login hook that runs the manifest is in ~/.zprofile. Returns 1 if the
+# component was already set to self-heal.
 add_self_heal() {
     local pattern="$1" cmd="$2"
     local count; count=$(init_match_count "$pattern")
     if (( count > 0 )); then return 1; fi
-    local line; line=$(self_heal_line_for "$cmd")
-    # Ensure the file ends with a newline before appending.
-    if [[ -s "$HOME/.zprofile" ]] && [[ "$(tail -c1 "$HOME/.zprofile" | od -An -c | tr -d ' ')" != '\n' ]]; then
-        printf '\n' >> "$HOME/.zprofile"
+    "$SCRIPT_DIR/42-dev-heal" --ensure-hook
+    if [[ -s "$HEAL_MANIFEST" ]] && [[ "$(tail -c1 "$HEAL_MANIFEST" | od -An -c | tr -d ' ')" != '\n' ]]; then
+        printf '\n' >> "$HEAL_MANIFEST"
     fi
-    printf '%s\n' "$line" >> "$HOME/.zprofile"
+    printf '%s\n' "$cmd" >> "$HEAL_MANIFEST"
     return 0
 }
 
@@ -139,7 +136,7 @@ preview_one() {
 
     local n; n=$(init_match_count "$C_PATTERN")
     if (( n > 0 )); then
-        printf "Self-heal:    YES  (%d line(s) in shell init)\n\n" "$n"
+        printf "Self-heal:    YES  (%d line(s) in heal manifest / shell init)\n\n" "$n"
         local file line_no text
         for file in "${INIT_FILES[@]}"; do
             [[ -f "$file" ]] || continue
@@ -152,8 +149,8 @@ preview_one() {
     else
         printf "Self-heal:    NO  (next login will NOT install this)\n"
         echo
-        printf "Install + self-heal would append to ~/.zprofile:\n"
-        printf "  %s\n" "$(self_heal_line_for "$C_CMD")"
+        printf "Install + self-heal would add to %s:\n" "$HEAL_MANIFEST"
+        printf "  %s\n" "$C_CMD"
     fi
 }
 
@@ -170,7 +167,7 @@ install_interactive() {
     local choice
     choice=$(printf '%s\n' \
         "install            — run \`${C_CMD}\` once (no shell init changes)" \
-        "install+self-heal  — install AND add a launch line to ~/.zprofile" \
+        "install+self-heal  — install AND add it to the heal manifest (runs on login)" \
         "abort              — do nothing, return to the picker" \
       | fzf --prompt="Action for '${C_NAME}' > " \
             --preview "$self --preview-of '$name'" \
@@ -194,7 +191,7 @@ install_interactive() {
     echo
     if ! eval "$HOME/Apps/bin/$C_CMD"; then
         echo
-        echo "[42-dev-install] bootstrap failed — leaving shell init alone" >&2
+        echo "[42-dev-install] bootstrap failed — leaving the heal manifest alone" >&2
         read -r -p "[press Enter to return to the picker] " _
         return 1
     fi

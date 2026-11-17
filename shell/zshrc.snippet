@@ -18,6 +18,9 @@ eval "$(mise activate zsh)"
 # daemon, which would otherwise block the prompt.
 [[ -x "$HOME/bin/tailscale-serve" ]] && "$HOME/bin/tailscale-serve" &>/dev/null &!
 
+# One line if the last login-time 42-dev-heal run had failures; silent otherwise.
+[[ -x "$HOME/Apps/bin/42-dev-heal" ]] && "$HOME/Apps/bin/42-dev-heal" --report
+
 # Minimal prompt with git branch (requires zsh's vcs_info). Optional.
 autoload -Uz vcs_info
 precmd() { vcs_info }

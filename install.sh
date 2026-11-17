@@ -39,6 +39,7 @@ install -m 0755 "$REPO_ROOT/bin/jb-sync-elixir-sdk"        "$HOME/Apps/bin/jb-sy
 install -m 0755 "$REPO_ROOT/bin/42-dev-install"            "$HOME/Apps/bin/42-dev-install"
 install -m 0755 "$REPO_ROOT/bin/42-dev-uninstall"          "$HOME/Apps/bin/42-dev-uninstall"
 install -m 0755 "$REPO_ROOT/bin/42-dev-validate"           "$HOME/Apps/bin/42-dev-validate"
+install -m 0755 "$REPO_ROOT/bin/42-dev-heal"               "$HOME/Apps/bin/42-dev-heal"
 install -m 0644 "$REPO_ROOT/lib/components.bash"           "$HOME/Apps/lib/components.bash"
 
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
@@ -54,30 +55,21 @@ Next steps — paste the shell snippets into your rc files:
   ~/.profile  ← $REPO_ROOT/shell/profile.snippet
   ~/.zshrc    ← $REPO_ROOT/shell/zshrc.snippet
 
-Then add a login-time hook to ~/.zprofile, e.g.:
+Then pick what reinstalls on every login, either with the TUI
+(\`42-dev-install\`, "install+self-heal") or by listing commands in
+~/Apps/etc/heal.list, one per line, e.g.:
 
-  nohup \$HOME/Apps/bin/jb-bootstrap IIU KronicDeth/intellij-elixir &>/dev/null & disown
-  nohup \$HOME/Apps/bin/mise-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/emacs-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/postgres-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/docker-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/inotify-tools-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/clangd-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/gh-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/ghidra-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/ocaml-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/graphviz-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/ollama-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/aider-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/opencode-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/cuda-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/tailscale-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/tor-browser-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/torsocks-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/actionlint-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/act-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/glow-bootstrap &>/dev/null & disown
-  nohup \$HOME/Apps/bin/repo-bootstrap git@github.com:you/yourrepo.git &>/dev/null & disown
+  mise-bootstrap
+  emacs-bootstrap
+  jb-bootstrap IIU KronicDeth/intellij-elixir
+  repo-bootstrap git@github.com:you/yourrepo.git
+
+and add the login hook that runs them (creates the manifest if missing):
+
+  42-dev-heal --ensure-hook
+
+Coming from \`(nohup ~/Apps/bin/<x>-bootstrap &>/dev/null &)\` lines in
+~/.zprofile? \`42-dev-heal --migrate\` moves them into the manifest.
 
 Adjust the JetBrains product code (IIU, WS, CL, …) and plugin list to taste.
 See README.md for the full list of supported products and plugin-spec syntax.

@@ -10,6 +10,10 @@
 # - class           : "safe" if bootstrap can restore it, "DATA" otherwise
 # - description     : one-line human description
 
+# Login-time self-heal list read by 42-dev-heal: one ~/Apps/bin command per
+# line. 42-dev-install adds to it, 42-dev-uninstall comments lines out.
+HEAL_MANIFEST="${HEAL_MANIFEST:-$HOME/Apps/etc/heal.list}"
+
 COMPONENTS=(
     "emacs|emacs-bootstrap|emacs|emacs-bootstrap|safe|Modern Emacs (tree-sitter + native-comp, GTK3/X11) ~100 MB"
     "clangd|clangd-bootstrap|clangd|clangd-bootstrap|safe|clangd LSP server for C/C++ ~250 MB"
