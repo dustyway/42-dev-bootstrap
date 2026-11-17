@@ -15,47 +15,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 VERSION="${1:-3.0.0}"
 ASSET="glow_${VERSION}_Linux_x86_64.tar.gz"
+SUMS="glow_${VERSION}_checksums.txt"      # upstream: checksums.txt
 BASE_URL="https://github.com/charmbracelet/glow/releases/download/v${VERSION}"
-URL="${BASE_URL}/${ASSET}"
-CHECKSUMS_URL="${BASE_URL}/checksums.txt"
-
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[glow-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
-
 APP_HOME="$SGO/glow/${VERSION}"
-TARBALL="$SGO/.cache/${ASSET}"
-SHAFILE="$SGO/.cache/glow_${VERSION}_checksums.txt"
-VERSION_MARKER="$APP_HOME/.glow-bootstrap-version"
 
-mkdir -p "$(dirname "$TARBALL")" "$SGO/glow"
-
-installed=""
-[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
-
-if [[ ! -x "$APP_HOME/glow" || "$installed" != "$VERSION" ]]; then
-    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
-        echo "[glow-bootstrap] switching version: '$installed' -> '$VERSION'"
-    fi
-    if [[ ! -s "$TARBALL" ]]; then
-        echo "[glow-bootstrap] downloading $ASSET"
-        curl -fL --retry 3 -o "$TARBALL" "$URL"
-        curl -fsSL -o "$SHAFILE" "$CHECKSUMS_URL"
-        # Anchored on the trailing name so the .sbom.json line doesn't match.
-        (cd "$(dirname "$TARBALL")" \
-            && grep "  ${ASSET}\$" "$(basename "$SHAFILE")" | sha256sum -c -) \
-            || { echo "[glow-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
-    fi
-    echo "[glow-bootstrap] installing glow $VERSION to $APP_HOME"
-    rm -rf "$APP_HOME.tmp" "$APP_HOME"
-    mkdir -p "$APP_HOME.tmp"
-    # Tarball has a single top-level glow_<v>_Linux_x86_64/ directory.
-    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
-    mv "$APP_HOME.tmp" "$APP_HOME"
-    printf '%s' "$VERSION" > "$VERSION_MARKER"
+if needs_install "$APP_HOME" "$VERSION" glow; then
+    fetch "$BASE_URL/$ASSET" "$CACHE/$ASSET"
+    fetch "$BASE_URL/checksums.txt" "$CACHE/$SUMS"
+    verify_sha256 "$CACHE/$ASSET" "$CACHE/$SUMS"
+    # Single top-level glow_<v>_Linux_x86_64/ directory.
+    install_tarball "$CACHE/$ASSET" "$APP_HOME" "$VERSION" --strip-components=1
 fi
 
-mkdir -p "$HOME/bin"
-ln -sf "$APP_HOME/glow" "$HOME/bin/glow"
+link_launcher "$APP_HOME/glow"

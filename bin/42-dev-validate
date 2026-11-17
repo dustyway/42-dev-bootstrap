@@ -10,7 +10,7 @@ ok() { printf '[ok] %s\n' "$*"; }
 bad() { printf '[fail] %s\n' "$*" >&2; fail=1; }
 
 check_bash_syntax() {
-    if bash -n "$ROOT/install.sh" "$ROOT/lib/components.bash" "$ROOT"/bin/*; then
+    if bash -n "$ROOT/install.sh" "$ROOT"/lib/*.bash "$ROOT"/bin/*; then
         ok "bash syntax"
     else
         bad "bash syntax"

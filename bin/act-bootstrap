@@ -3,13 +3,9 @@
 # cluster machines via the upstream nektos/act prebuilt releases. Safe to
 # run every login (idempotent).
 #
-# Pulls the prebuilt Linux_x86_64 tarball from
-# https://github.com/nektos/act/releases and extracts to /sgoinfre so it
-# persists across /goinfre wipes. The act binary is symlinked into ~/bin,
-# which Ubuntu's default ~/.profile prepends to PATH.
-#
-# Why this exists: act is not in apt; the prebuilt binary is a single
-# static Go binary that needs nothing but the kernel.
+# act is not in apt; the prebuilt binary is a single static Go binary that
+# needs nothing but the kernel. sha256-verified against the release's
+# checksums.txt.
 #
 # act runs workflow jobs in Docker containers, using the cluster's rootless
 # Docker (see docker-bootstrap, which keeps its data-root on /goinfre).
@@ -18,63 +14,27 @@
 #
 # ─── Placement ───────────────────────────────────────────────────────────────
 # App binary     → $SGO/act/<version>/act              persistent on sgoinfre
-# Cached tarball → $SGO/.cache/act_<v>_Linux_x86_64.tar.gz
+# Cached tarball → $SGO/.cache/act_<v>_act_Linux_x86_64.tar.gz
 # Launcher       → ~/bin/act                           symlink, tiny
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 VERSION="${1:-0.2.88}"
 ASSET="act_Linux_x86_64.tar.gz"
-CHECKSUMS="checksums.txt"
 BASE_URL="https://github.com/nektos/act/releases/download/v${VERSION}"
-URL="${BASE_URL}/${ASSET}"
-CHECKSUMS_URL="${BASE_URL}/${CHECKSUMS}"
-
-# Version-prefix the cached files so multiple versions don't collide
-# (upstream's asset names are version-agnostic, unlike actionlint/gh).
-CACHED_ASSET="act_${VERSION}_${ASSET}"
-CACHED_CHECKSUMS="act_${VERSION}_${CHECKSUMS}"
-
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[act-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
-
 APP_HOME="$SGO/act/${VERSION}"
-TARBALL="$SGO/.cache/${CACHED_ASSET}"
-SHAFILE="$SGO/.cache/${CACHED_CHECKSUMS}"
-VERSION_MARKER="$APP_HOME/.act-bootstrap-version"
+# Upstream's asset names don't carry the version, so the cached copies do.
+TARBALL="$CACHE/act_${VERSION}_${ASSET}"
+SUMS="$CACHE/act_${VERSION}_checksums.txt"
 
-mkdir -p "$(dirname "$TARBALL")" "$SGO/act"
-
-installed=""
-[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
-
-if [[ ! -x "$APP_HOME/act" || "$installed" != "$VERSION" ]]; then
-    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
-        echo "[act-bootstrap] switching version: '$installed' -> '$VERSION'"
-        rm -f "$TARBALL" "$SHAFILE"
-    fi
-    if [[ ! -s "$TARBALL" ]]; then
-        echo "[act-bootstrap] downloading $ASSET"
-        curl -fL --retry 3 -o "$TARBALL" "$URL"
-        curl -fsSL -o "$SHAFILE" "$CHECKSUMS_URL"
-        # checksums.txt lists every release asset; grep our line and verify.
-        # Anchored on trailing name to avoid prefix-name collisions.
-        (cd "$(dirname "$TARBALL")" \
-            && grep "  ${ASSET}\$" "$(basename "$SHAFILE")" \
-            | sed "s|  ${ASSET}\$|  $(basename "$TARBALL")|" \
-            | sha256sum -c -) \
-            || { echo "[act-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
-    fi
-    echo "[act-bootstrap] installing act $VERSION to $APP_HOME"
-    rm -rf "$APP_HOME.tmp" "$APP_HOME"
-    mkdir -p "$APP_HOME.tmp"
-    # Upstream's tarball contains act + LICENSE + README at the top level
-    # with no subdirectory; extract just the binary.
-    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" act
-    mv "$APP_HOME.tmp" "$APP_HOME"
-    printf '%s' "$VERSION" > "$VERSION_MARKER"
+if needs_install "$APP_HOME" "$VERSION" act; then
+    fetch "$BASE_URL/$ASSET" "$TARBALL"
+    fetch "$BASE_URL/checksums.txt" "$SUMS"
+    verify_sha256 "$TARBALL" "$SUMS" "$ASSET"
+    # act + LICENSE + README at the top level; take just the binary.
+    install_tarball "$TARBALL" "$APP_HOME" "$VERSION" act
 fi
 
-mkdir -p "$HOME/bin"
-ln -sf "$APP_HOME/act" "$HOME/bin/act"
+link_launcher "$APP_HOME/act"

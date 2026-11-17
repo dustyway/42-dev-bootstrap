@@ -41,6 +41,7 @@ install -m 0755 "$REPO_ROOT/bin/42-dev-uninstall"          "$HOME/Apps/bin/42-de
 install -m 0755 "$REPO_ROOT/bin/42-dev-validate"           "$HOME/Apps/bin/42-dev-validate"
 install -m 0755 "$REPO_ROOT/bin/42-dev-heal"               "$HOME/Apps/bin/42-dev-heal"
 install -m 0644 "$REPO_ROOT/lib/components.bash"           "$HOME/Apps/lib/components.bash"
+install -m 0644 "$REPO_ROOT/lib/bootstrap.bash"            "$HOME/Apps/lib/bootstrap.bash"
 
 if [[ ! -e "$HOME/Apps/etc/npm-globals.txt" ]]; then
     cp "$REPO_ROOT/etc/npm-globals.txt.example" "$HOME/Apps/etc/npm-globals.txt"

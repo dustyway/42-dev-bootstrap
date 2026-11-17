@@ -135,7 +135,8 @@ wipes.
 ### `fzf-bootstrap [VERSION]`
 
 Installs the [fzf](https://github.com/junegunn/fzf) fuzzy finder from the
-upstream releases and links `~/bin/fzf`.
+upstream releases, verified against the release checksums, and links
+`~/bin/fzf`.
 
 ### `actionlint-bootstrap [VERSION]`
 
@@ -411,6 +412,34 @@ new terminals when the last run had failures, and nothing otherwise.
 
 Run state lives on `/goinfre`, so it's per machine: `--status` on another
 machine shows that machine's last run.
+
+## Writing a bootstrap
+
+`lib/bootstrap.bash` has the shared parts. Sourcing it sets `$SGO` and
+`$CACHE` (`$SGO/.cache`) and provides:
+
+| Helper | Does |
+|---|---|
+| `fetch URL DEST` | Download to `DEST` unless it's already cached; goes through `DEST.part`, so an interrupted download is never reused |
+| `verify_sha256 FILE SUMS [NAME]` | Check `FILE` against its line in a `sha256sum`-style list; on a mismatch, delete both so the next run downloads them again |
+| `needs_install APP_HOME VERSION BIN` | True if `BIN` is missing or another version is installed |
+| `install_tarball TARBALL APP_HOME VERSION [TAR_ARGS…]` | Extract into `APP_HOME.tmp`, record the version, swap it in |
+| `link_launcher TARGET [NAME]` | Symlink `~/bin/NAME` to `TARGET` |
+| `log`, `die` | Messages prefixed with the script name |
+
+`fzf-bootstrap`, `glow-bootstrap`, `act-bootstrap` and `actionlint-bootstrap`
+are short examples. The other scripts don't use the library yet.
+
+To try a bootstrap without touching your real installs, point it at scratch
+directories:
+
+```sh
+BOOTSTRAP_SGO=/goinfre/$USER/sgo-test HOME=/goinfre/$USER/home-test bin/fzf-bootstrap
+```
+
+`BOOTSTRAP_SGO` only affects scripts that use the library. The others, and
+`42-dev-uninstall`, still find `/sgoinfre` from `$USER`, even with `HOME`
+changed.
 
 ## mise runtimes
 
