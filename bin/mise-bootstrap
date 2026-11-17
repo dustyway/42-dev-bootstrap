@@ -8,12 +8,13 @@
 # ~/Apps/etc/npm-globals.txt (one npm package per line).
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 # Pin storage to the school's persistent network share + local disk. Export
 # these here too (not only in ~/.profile) so the script works correctly even
 # if invoked from a shell that didn't source .profile — otherwise mise would
 # fall back to ~/.local/share/mise and blow the $HOME 5 GB quota.
-export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
+export MISE_DATA_DIR="$SGO/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
 mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
 # Rust: the cluster's /etc/zsh/zshenv and /etc/profile.d/rust.sh point
@@ -21,8 +22,8 @@ mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
 # PATH, so apt's rustc 1.75 shadows it). mise's rust backend would inherit
 # those paths and fail to write, so give it user-owned homes on sgoinfre.
 # `mise env`/`mise activate` then export RUSTUP_HOME/CARGO_HOME pointing here.
-export MISE_RUSTUP_HOME="/sgoinfre/goinfre/Perso/${USER}/rustup"
-export MISE_CARGO_HOME="/sgoinfre/goinfre/Perso/${USER}/cargo"
+export MISE_RUSTUP_HOME="$SGO/rustup"
+export MISE_CARGO_HOME="$SGO/cargo"
 
 # Returns 0 if the given tool is configured in any active mise config file.
 has_tool() { MISE_DATA_DIR="$MISE_DATA_DIR" mise current "$1" &>/dev/null; }
@@ -47,7 +48,7 @@ if has_tool erlang; then
             printf 'KERL_CONFIGURE_OPTIONS="%s"\n' "$KERL_CONFIGURE_OPTIONS" > "$HOME/.kerlrc"
             export LD_LIBRARY_PATH="${WX_HOME}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
         else
-            echo "[mise-bootstrap] WARNING: wx-bootstrap failed; :observer will not work" >&2
+            log "WARNING: wx-bootstrap failed; :observer will not work" >&2
         fi
     fi
     unset _wx_bootstrap
@@ -77,13 +78,13 @@ if has_tool elixir && command -v mix >/dev/null 2>&1; then
     mix local.hex --if-missing --force >/dev/null 2>&1 || true
     mix local.rebar --if-missing --force >/dev/null 2>&1 || true
     if ! mix archive 2>/dev/null | grep -q '^\* phx_new'; then
-        echo "[mise-bootstrap] installing phx_new archive"
+        log "installing phx_new archive"
         mix archive.install hex phx_new --force
     fi
     # Escripts live under the per-version MIX_HOME too (mise puts its
     # escripts/ dir on PATH), so a version bump drops livebook.
     if ! mix escript 2>/dev/null | grep -q '^\* livebook'; then
-        echo "[mise-bootstrap] installing livebook escript"
+        log "installing livebook escript"
         mix escript.install hex livebook --force
     fi
 fi
@@ -107,7 +108,7 @@ if has_tool node && command -v npm >/dev/null 2>&1; then
             [[ -d "$npm_prefix/lib/node_modules/$name" ]] || missing+=("$line")
         done < "$GLOBALS"
         if (( ${#missing[@]} > 0 )); then
-            echo "[mise-bootstrap] installing missing npm globals: ${missing[*]}"
+            log "installing missing npm globals: ${missing[*]}"
             npm install -g "${missing[@]}"
         fi
     fi
@@ -121,11 +122,12 @@ fi
 if [[ -n "$WX_HOME" ]]; then
     # ~/.profile: wx shared libs must be on LD_LIBRARY_PATH for :observer.
     if [[ -f "$HOME/.profile" ]] && ! grep -q "# wx-sgoinfre LD_LIBRARY_PATH" "$HOME/.profile"; then
-        cat >> "$HOME/.profile" <<'WXPROFILE'
+        # The path of the wx actually installed, rather than a fixed version.
+        cat >> "$HOME/.profile" <<WXPROFILE
 
 # wx-sgoinfre LD_LIBRARY_PATH — added by mise-bootstrap for :observer support
-_wx_lib="/sgoinfre/goinfre/Perso/${USER}/wx/3.2.6/lib"
-[[ -d "$_wx_lib" ]] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${_wx_lib}"
+_wx_lib="$WX_HOME/lib"
+[[ -d "\$_wx_lib" ]] && export LD_LIBRARY_PATH="\${LD_LIBRARY_PATH:+\${LD_LIBRARY_PATH}:}\${_wx_lib}"
 unset _wx_lib
 WXPROFILE
     fi

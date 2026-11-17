@@ -20,6 +20,7 @@
 #   pinned:  write npm:@opencode/cli@VERSION to global mise config
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 VERSION="${1:-}"
 TOOL="npm:@opencode/cli"
@@ -29,22 +30,21 @@ HOOK="node $PKG/@opencode/cli/postinstall.mjs && rm -rf $PKG/.mise/@opencode+cli
 SPEC="${TOOL}[postinstall=${HOOK}]"
 [[ -n "$VERSION" ]] && SPEC="${SPEC}@${VERSION}"
 
-export MISE_DATA_DIR="/sgoinfre/goinfre/Perso/${USER}/mise-data"
+export MISE_DATA_DIR="$SGO/mise-data"
 export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
 mkdir -p "$MISE_DATA_DIR" "$MISE_CACHE_DIR"
 
 if ! command -v mise >/dev/null 2>&1; then
-    echo "[opencode-bootstrap] mise not on PATH — install mise first" >&2
-    exit 1
+    die "mise not on PATH — install mise first"
 fi
 
 if grep -qF "\"$LEGACY_TOOL\"" "$HOME/.config/mise/config.toml" 2>/dev/null; then
-    echo "[opencode-bootstrap] removing v1 entry from global mise config: $LEGACY_TOOL"
+    log "removing v1 entry from global mise config: $LEGACY_TOOL"
     mise use -g --remove "$LEGACY_TOOL"
     rm -rf "$MISE_DATA_DIR/installs/github-anomalyco-opencode"
 fi
 
-echo "[opencode-bootstrap] enabling OpenCode in global mise config: $TOOL${VERSION:+@$VERSION}"
+log "enabling OpenCode in global mise config: $TOOL${VERSION:+@$VERSION}"
 mise use -g -y "$SPEC"
 
 eval "$(mise env -s bash)"
@@ -52,15 +52,15 @@ eval "$(mise env -s bash)"
 # An install made before the hook existed still has the stub binary; mise sees
 # it as installed and skips the hook, so force a reinstall to heal it.
 if command -v opencode >/dev/null 2>&1 && ! opencode --version >/dev/null 2>&1; then
-    echo "[opencode-bootstrap] opencode binary is a stub — reinstalling to run the postinstall hook"
+    log "opencode binary is a stub — reinstalling to run the postinstall hook"
     mise install -f "$TOOL${VERSION:+@$VERSION}"
 fi
 
 if ! command -v opencode >/dev/null 2>&1; then
-    echo "[opencode-bootstrap] installed, but mise shims are not on PATH yet — open a new shell." >&2
+    log "installed, but mise shims are not on PATH yet — open a new shell." >&2
     exit 0
 fi
-echo "[opencode-bootstrap] opencode ready: $(command -v opencode)"
+log "opencode ready: $(command -v opencode)"
 
 # Tailnet providers (e.g. gx10) are only reachable through tailscaled's
 # userspace proxy, and OpenCode can't use SOCKS — point its background service
@@ -77,10 +77,10 @@ if [[ -x "$HOME/bin/tailscale-serve" ]]; then
         changed=1
     done
     if (( changed )); then
-        echo "[opencode-bootstrap] background service routed through Tailscale HTTP proxy ($proxy)"
+        log "background service routed through Tailscale HTTP proxy ($proxy)"
         if pgrep -u "$USER" -f 'opencode.* serve --service' >/dev/null; then
             opencode service restart >/dev/null \
-                && echo "[opencode-bootstrap] restarted background service — restart any open OpenCode TUI too"
+                && log "restarted background service — restart any open OpenCode TUI too"
         fi
     fi
 fi

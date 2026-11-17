@@ -29,25 +29,22 @@
 # open coding model that fits sgoinfre with headroom.
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 OLLAMA_BIN="${OLLAMA_BIN:-/bin/ollama}"
 USER_PORT="${OLLAMA_USER_PORT:-11435}"
 BOOTSTRAP_PORT="${OLLAMA_BOOTSTRAP_PORT:-11500}"  # transient daemon for missing-model pulls
 
 if [[ ! -x "$OLLAMA_BIN" ]]; then
-    echo "[ollama-bootstrap] no ollama binary at $OLLAMA_BIN" >&2
-    echo "[ollama-bootstrap] override with OLLAMA_BIN=/path/to/ollama, or fall back" >&2
-    echo "[ollama-bootstrap] to a self-installed copy (see git history of this script)." >&2
-    exit 1
+    log "no ollama binary at $OLLAMA_BIN" >&2
+    log "override with OLLAMA_BIN=/path/to/ollama, or fall back" >&2
+    die "to a self-installed copy (see git history of this script)."
 fi
-
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[ollama-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
 
 MODELS_DIR="$SGO/ollama/models"
 MODELS_FILE="$HOME/Apps/etc/ollama-models.txt"
 
-mkdir -p "$MODELS_DIR" "$HOME/Apps/etc" "$HOME/bin"
+mkdir -p "$MODELS_DIR" "$HOME/Apps/etc"
 
 # Seed the desired-models list on first run.
 if [[ ! -e "$MODELS_FILE" ]]; then
@@ -56,12 +53,12 @@ if [[ ! -e "$MODELS_FILE" ]]; then
 # `ollama-bootstrap` re-pulls anything missing from $OLLAMA_MODELS.
 qwen2.5-coder:7b
 EOF
-    echo "[ollama-bootstrap] seeded $MODELS_FILE"
+    log "seeded $MODELS_FILE"
 fi
 
 # Launcher: starts the user's daemon on $USER_PORT with the right
 # OLLAMA_MODELS. Idempotent — bails if a daemon already responds.
-cat > "$HOME/bin/ollama-serve" <<EOF
+write_launcher ollama-serve <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export OLLAMA_MODELS="$MODELS_DIR"
@@ -75,7 +72,6 @@ nohup "$OLLAMA_BIN" serve >>"\$LOG" 2>&1 &
 disown
 echo "[ollama-serve] daemon starting on \$OLLAMA_HOST (log: \$LOG)"
 EOF
-chmod +x "$HOME/bin/ollama-serve"
 
 # ── Ensure desired models are present ──────────────────────────────────────
 mapfile -t WANT < <(grep -vE '^\s*(#|$)' "$MODELS_FILE" || true)
@@ -100,6 +96,6 @@ for m in "${WANT[@]}"; do
     if grep -Fxq -- "$m" <<< "$have"; then
         continue
     fi
-    echo "[ollama-bootstrap] pulling $m (this may take a while)"
+    log "pulling $m (this may take a while)"
     "$OLLAMA_BIN" pull "$m"
 done

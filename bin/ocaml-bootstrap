@@ -23,65 +23,41 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 VERSION="${1:-5.5.2}"
 REPO="${OCAML_BOOTSTRAP_REPO:-dustyway/42-dev-bootstrap}"
 ASSET="ocaml-${VERSION}-linux-x86_64.tar.gz"
 URL="https://github.com/${REPO}/releases/download/ocaml-${VERSION}/${ASSET}"
-
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[ocaml-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
-
 APP_HOME="$SGO/ocaml/${VERSION}"
-TARBALL="$SGO/.cache/${ASSET}"
-SHAFILE="$SGO/.cache/${ASSET}.sha256"
-VERSION_MARKER="$APP_HOME/.ocaml-bootstrap-version"
 
-mkdir -p "$(dirname "$TARBALL")" "$SGO/ocaml"
-
-installed=""
-[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
-
-if [[ ! -x "$APP_HOME/bin/ocamlopt" || "$installed" != "$VERSION" ]]; then
-    if [[ ! -s "$TARBALL" ]]; then
-        echo "[ocaml-bootstrap] downloading $ASSET"
-        curl -fL --retry 3 -o "$TARBALL" "$URL"
-        curl -fsSL -o "$SHAFILE" "${URL}.sha256"
-        (cd "$(dirname "$TARBALL")" && sha256sum -c "$(basename "$SHAFILE")") \
-            || { echo "[ocaml-bootstrap] sha256 mismatch for $ASSET" >&2; rm -f "$TARBALL"; exit 1; }
-    fi
-    echo "[ocaml-bootstrap] installing OCaml $VERSION to $APP_HOME"
-    rm -rf "$APP_HOME.tmp" "$APP_HOME"
-    mkdir -p "$APP_HOME.tmp"
-    tar -xzf "$TARBALL" -C "$APP_HOME.tmp" --strip-components=1
-    mv "$APP_HOME.tmp" "$APP_HOME"
-    printf '%s' "$VERSION" > "$VERSION_MARKER"
+if needs_install "$APP_HOME" "$VERSION" bin/ocamlopt; then
+    fetch "$URL" "$CACHE/$ASSET"
+    fetch "$URL.sha256" "$CACHE/$ASSET.sha256"
+    verify_sha256 "$CACHE/$ASSET" "$CACHE/$ASSET.sha256"
+    install_tarball "$CACHE/$ASSET" "$APP_HOME" "$VERSION" --strip-components=1
 fi
 
+# Compared resolved, so a symlink in the path isn't reported as a mismatch.
 where=$("$APP_HOME/bin/ocamlopt" -where)
-if [[ "$where" != "$APP_HOME/lib/ocaml" ]]; then
-    echo "[ocaml-bootstrap] built for $where, installed at $APP_HOME/lib/ocaml." >&2
-    echo "[ocaml-bootstrap] Update OCAML_ROOT in build-ocaml.yml and rebuild." >&2
-    exit 1
+if [[ "$(readlink -f "$where")" != "$(readlink -f "$APP_HOME/lib/ocaml")" ]]; then
+    log "built for $where, installed at $APP_HOME/lib/ocaml." >&2
+    die "Update OCAML_ROOT in build-ocaml.yml and rebuild."
 fi
 
-mkdir -p "$HOME/bin"
 for tool in "$APP_HOME"/bin/ocaml* "$APP_HOME/bin/dune"; do
-    ln -sf "$tool" "$HOME/bin/$(basename "$tool")"
+    link_launcher "$tool"
 done
 
 # The toplevels load C stubs and topfind from paths opam normally exports via
-# `opam env`. Set them here so `ocaml` and `utop` work without opam. rm first:
-# a plain redirect would follow an existing symlink into the toolchain.
+# `opam env`. Set them here so `ocaml` and `utop` work without opam.
 for tool in ocaml utop; do
-    rm -f "$HOME/bin/$tool"
-    cat > "$HOME/bin/$tool" <<EOF
+    write_launcher "$tool" <<EOF
 #!/bin/sh
 export CAML_LD_LIBRARY_PATH="$APP_HOME/lib/stublibs:$APP_HOME/lib/ocaml/stublibs"
 export OCAML_TOPLEVEL_PATH="$APP_HOME/lib/toplevel"
 exec "$APP_HOME/bin/$tool" "\$@"
 EOF
-    chmod +x "$HOME/bin/$tool"
 done
 
-echo "[ocaml-bootstrap] $("$HOME/bin/ocamlopt" -version) ready at $APP_HOME"
+log "$("$HOME/bin/ocamlopt" -version) ready at $APP_HOME"

@@ -27,27 +27,23 @@
 #   rm -rf /sgoinfre/goinfre/Perso/*<you>*/docker-buildcache
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
-if ! docker buildx version >/dev/null 2>&1; then
-    echo "[docker-build] docker buildx not available" >&2
-    exit 1
-fi
+docker buildx version >/dev/null 2>&1 || die "docker buildx not available"
 
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[docker-build] sgoinfre path not found for $USER" >&2; exit 1; }
-
-CACHE="$SGO/docker-buildcache"
+# Not $CACHE: that's the library's download cache.
+BUILD_CACHE="$SGO/docker-buildcache"
 BUILDER="sgoinfre-cache"
-mkdir -p "$CACHE"
+mkdir -p "$BUILD_CACHE"
 
 # Heal/create the docker-container builder (lost on every /goinfre wipe). The
 # cache it imports from lives on /sgoinfre, so a fresh builder warms instantly.
 if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
-    echo "[docker-build] creating BuildKit builder '$BUILDER' (once per /goinfre lifetime)"
+    log "creating BuildKit builder '$BUILDER' (once per /goinfre lifetime)"
     docker buildx create --name "$BUILDER" --driver docker-container --bootstrap >/dev/null
 fi
 
 exec docker buildx build --builder "$BUILDER" \
-    --cache-from "type=local,src=$CACHE" \
-    --cache-to "type=local,dest=$CACHE,mode=max" \
+    --cache-from "type=local,src=$BUILD_CACHE" \
+    --cache-to "type=local,dest=$BUILD_CACHE,mode=max" \
     "$@"

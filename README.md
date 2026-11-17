@@ -457,8 +457,8 @@ changed, so running them in a test touches your real installs.
 `bin/42-dev-validate` lists them:
 
 ```
-[ok] lib/bootstrap.bash: 15 of 24 bootstraps
-[todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): cuda-bootstrap …
+[ok] lib/bootstrap.bash: 19 of 24 bootstraps
+[todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): cuda-bootstrap jb-bootstrap
 ```
 
 ## mise runtimes
