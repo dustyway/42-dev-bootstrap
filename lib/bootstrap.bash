@@ -37,6 +37,27 @@ fi
 CACHE="$SGO/.cache"
 mkdir -p "$CACHE"
 
+# One run at a time per bootstrap and arguments (so jb-bootstrap WS and
+# jb-bootstrap PCP still run in parallel). Two concurrent installs share
+# APP_HOME.tmp and delete each other's half-extracted files: a login heal
+# run started during a manual run once left an install missing 9 of its
+# libraries. The lock is on $SGO, so it also covers another machine; the
+# second run waits, then finds the install done.
+#
+# The script re-executes itself under `flock -o`: the flock process holds the
+# lock until the script exits, and the script gets no copy of the lock's file
+# descriptor, so daemons it starts (tailscaled, ollama serve) can't keep
+# holding it. _BS_LOCKED names the key already held, so a bootstrap that
+# calls another (mise-bootstrap → wx-bootstrap) still locks the inner one.
+_bs_lock_key=$(printf '%s' "$BS_NAME $*" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-120)
+if [[ "${_BS_LOCKED:-}" != "$_bs_lock_key" ]]; then
+    mkdir -p "$CACHE/.locks"
+    _bs_lock="$CACHE/.locks/$_bs_lock_key"
+    flock -n "$_bs_lock" true || log "another run is in progress; waiting for it"
+    _BS_LOCKED="$_bs_lock_key" exec flock -o -w "${BOOTSTRAP_LOCK_TIMEOUT:-7200}" \
+        "$_bs_lock" "$0" "$@"
+fi
+
 # fetch URL DEST
 # Download URL to DEST unless DEST is already there. The download goes to
 # DEST.part first, so an interrupted one is never mistaken for a cached file.
