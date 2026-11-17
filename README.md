@@ -243,7 +243,10 @@ model is `qwen2.5-coder:7b`.
 
 Installs aider with `uv tool`. The Python environment (200–500 MB) goes in
 `/sgoinfre/uv-tools/` via `UV_TOOL_DIR`; only the `~/.local/bin/aider` shim is
-in `$HOME`. Reinstalls when the environment is gone.
+in `$HOME`. Reinstalls when the environment is gone. It pins Python 3.13:
+aider's scipy has no prebuilt wheels for 3.14, and building it needs a
+Fortran compiler. uv downloads that Python (about 110 MB) into
+`~/.local/share/uv/python` unless `UV_PYTHON_INSTALL_DIR` points elsewhere.
 
 With `ollama-bootstrap` it can run fully locally:
 
@@ -468,7 +471,15 @@ machine shows that machine's last run.
 | `link_launchers DIR` | Symlink every executable in `DIR` into `~/bin` |
 | `write_launcher NAME` | Write stdin to `~/bin/NAME` as an executable wrapper script, for launchers that need environment or arguments |
 | `write_desktop_entry NAME` | Write stdin to `~/.local/share/applications/NAME.desktop` and refresh the desktop database |
-| `log`, `die` | Messages prefixed with the script name |
+| `log`, `die` | Messages prefixed with the script name (set `BS_LOG_NAME` to change the prefix, as `jb-bootstrap` does per IDE) |
+
+Sourcing the library also makes runs of the same bootstrap with the same
+arguments take turns: the script re-runs itself under `flock`, with the
+lock in `$SGO/.cache/.locks/`, so it covers a second machine too. A login
+heal run that starts while you run a bootstrap by hand waits, then finds the
+install done, instead of extracting into the same `APP_HOME.tmp`. Daemons a
+bootstrap starts don't inherit the lock. A run gives up after
+`BOOTSTRAP_LOCK_TIMEOUT` seconds (default 7200).
 
 `fzf-bootstrap` is the shortest example, `ghidra-bootstrap` the fullest (two
 installs, a wrapper and a desktop entry). `install.sh` copies everything in
