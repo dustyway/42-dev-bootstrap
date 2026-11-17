@@ -33,6 +33,10 @@ Installs a JetBrains IDE.
 - Binary, cached tarball and config go to `/sgoinfre`; indexes and logs go to
   `/goinfre`.
 - Adds a `~/bin/<slug>` launcher and a `.desktop` entry with the IDE's icon.
+  The launcher passes the IDE a properties file kept outside the install
+  (`<ENV>_PROPERTIES`, e.g. `WEBIDE_PROPERTIES`), so an in-place IDE update
+  that resets `bin/idea.properties` can't send it back to the default
+  `~/.config` and `~/.local/share` paths in `$HOME`.
 - Installs plugins from GitHub releases, since the marketplace often lags.
 - `<CODE>@VERSION` pins an IDE release; `owner/repo@tag` pins a plugin.
   Without a pin, the IDE is the latest release at first install and then

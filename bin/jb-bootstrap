@@ -151,19 +151,44 @@ print(r["version"], d["link"], d["checksumLink"])
     install_tarball "$APP_TARBALL" "$APP_HOME" "$VERSION" --strip-components=1
 fi
 
-# 3. Rewrite idea.properties every run. Redirects the IDE's four runtime dirs
-#    away from $HOME (which would blow the 5 GB quota once indexes build up).
-#    All JetBrains IDEs read this file from <app>/bin/idea.properties regardless
-#    of product name — it's a legacy name, not IDEA-specific.
-cat > "$APP_HOME/bin/idea.properties" <<EOF
+# 3. Redirect the IDE's four runtime dirs away from $HOME (which would blow
+#    the quota once indexes build up), via an idea.properties file. Written
+#    every run, in two places:
+#    - $APP_CONFIG/idea.properties, which the ~/bin launcher (step 4) passes
+#      to the IDE. It's outside the install, because an in-place IDE update
+#      can replace bin/idea.properties with the stock one; the IDE then ran on
+#      the default ~/.config and ~/.local/share paths until the next login.
+#    - bin/idea.properties, for launches that bypass ~/bin (all JetBrains
+#      IDEs read it under this name; it's a legacy name, not IDEA-specific).
+PROPS="$APP_CONFIG/idea.properties"
+for f in "$PROPS" "$APP_HOME/bin/idea.properties"; do
+    cat > "$f" <<EOF
 idea.config.path=$APP_CONFIG/config
 idea.plugins.path=$APP_CONFIG/plugins
 idea.system.path=$GO/system
 idea.log.path=$GO/logs
 EOF
+done
 
-# 4. Launcher symlink under the slug name, so upgrades propagate.
-link_launcher "$APP_HOME/bin/$LAUNCHER" "$SLUG"
+# 4. Launcher under the slug name. The IDE's launcher reads a properties file
+#    named by <envVarBaseName>_PROPERTIES (WEBIDE_PROPERTIES for WebStorm,
+#    PYCHARM_PROPERTIES, …; the base name is in product-info.json). A restart
+#    after an update inherits the variable. Exec'ing the install's binary
+#    keeps upgrades propagating, as the old symlink did.
+env_base=$(python3 -I -c '
+import json, sys
+print(json.load(open(sys.argv[1])).get("envVarBaseName", ""))
+' "$APP_HOME/product-info.json" 2>/dev/null) || env_base=""
+if [[ "$env_base" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+    write_launcher "$SLUG" <<EOF
+#!/bin/sh
+export ${env_base}_PROPERTIES="$PROPS"
+exec "$APP_HOME/bin/$LAUNCHER" "\$@"
+EOF
+else
+    log "no envVarBaseName in product-info.json; linking the launcher, which reads only bin/idea.properties" >&2
+    link_launcher "$APP_HOME/bin/$LAUNCHER" "$SLUG"
+fi
 
 # 5. Desktop entry, so the IDE appears in the desktop's launcher. JetBrains
 #    tarballs don't ship one. The file name matches what the IDE's own
