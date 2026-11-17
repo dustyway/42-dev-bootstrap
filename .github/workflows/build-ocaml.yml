@@ -9,18 +9,20 @@ name: Build OCaml
 # would need a persistent opam root there. Shipping the finished switch needs
 # no opam on the cluster at all.
 #
-# The prefix is hard-coded, unlike the other build workflows: an OCaml install
-# records its absolute location (stdlib path, ld.conf, findlib.conf, bytecode
-# shebangs), so it has to be built at the path it will run from. OPAMROOT is
-# the parent of the switch and the switch is named after the version, which
-# makes the prefix $OCAML_ROOT/<version>. The result only works for the login
-# in OCAML_ROOT; ocaml-bootstrap refuses to link it anywhere else.
+# Built at a neutral prefix, $OCAML_ROOT/<version>, and run from wherever
+# ocaml-bootstrap unpacks it. OCaml 5.5's compiler finds its stdlib relative
+# to its own binary, and ocamlfind its findlib.conf; utop and ocamllsp embed
+# the build-time paths, so ocaml-bootstrap's ~/bin wrappers for them set
+# OCAMLLIB and OCAMLFIND_CONF. The smoke test below unpacks the tarball at a
+# different path, with the build tree deleted, to prove this.
 #
 # Runner pinned to ubuntu-22.04 for the glibc 2.35 floor that matches the 42
 # cluster baseline — same reasoning as build-emacs.yml.
 #
-# Trigger by pushing a tag named ocaml-<VERSION>, e.g.:
-#   git tag ocaml-5.5.2 && git push origin ocaml-5.5.2
+# Trigger by pushing a tag named ocaml-<VERSION>[-r<N>], e.g.:
+#   git tag ocaml-5.5.2-r1 && git push origin ocaml-5.5.2-r1
+# -r<N> marks a rebuild of the same OCaml version (changed packages or build
+# settings); ocaml-bootstrap records it, so installs pick the rebuild up.
 # Or run manually via the Actions UI (workflow_dispatch).
 
 on:
@@ -29,10 +31,10 @@ on:
       - "ocaml-*"
   workflow_dispatch:
     inputs:
-      ocaml_version:
-        description: "OCaml version to build (e.g. 5.5.2)"
+      release:
+        description: "Release to build: OCaml version, optionally -r<N> (e.g. 5.5.2-r1)"
         required: true
-        default: "5.5.2"
+        default: "5.5.2-r1"
 
 permissions:
   contents: write
@@ -53,13 +55,16 @@ jobs:
         id: ver
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            v="${{ inputs.ocaml_version }}"
+            rel="${{ inputs.release }}"
           else
             tag="${GITHUB_REF#refs/tags/}"
-            v="${tag#ocaml-}"
+            rel="${tag#ocaml-}"
           fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "tag=ocaml-$v" >> "$GITHUB_OUTPUT"
+          [[ "$rel" =~ ^[0-9]+(\.[0-9]+)+(-r[0-9]+)?$ ]] || { echo "bad release: $rel" >&2; exit 1; }
+          # opam's compiler version, without the -r<N> rebuild suffix.
+          echo "version=${rel%-r*}" >> "$GITHUB_OUTPUT"
+          echo "release=$rel" >> "$GITHUB_OUTPUT"
+          echo "tag=ocaml-$rel" >> "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
         run: |
@@ -93,7 +98,7 @@ jobs:
       - name: Package tarball
         run: |
           v="${{ steps.ver.outputs.version }}"
-          out="ocaml-${v}-linux-x86_64.tar.gz"
+          out="ocaml-${{ steps.ver.outputs.release }}-linux-x86_64.tar.gz"
           # opam's bookkeeping and build trees are dead weight without opam.
           rm -rf "$OCAML_ROOT/$v/.opam-switch"
           tar -C "$OCAML_ROOT" -czf "$out" "$v"
@@ -102,13 +107,14 @@ jobs:
 
       - name: Smoke-test the tarball
         run: |
-          v="${{ steps.ver.outputs.version }}"
-          prefix="$OCAML_ROOT/$v"
-          # Replace the build with the tarball's contents and hide opam, so
-          # this tests what ocaml-bootstrap installs, not the runner's state.
-          rm -rf "$prefix"
+          rel="${{ steps.ver.outputs.release }}"
+          # Unpack somewhere other than the build prefix, then delete the build
+          # and hide opam: this tests what ocaml-bootstrap installs, at a path
+          # the toolchain wasn't built for.
+          prefix="$RUNNER_TEMP/relocated/$rel"
           mkdir -p "$prefix"
-          tar -xzf "ocaml-${v}-linux-x86_64.tar.gz" -C "$prefix" --strip-components=1
+          tar -xzf "ocaml-${rel}-linux-x86_64.tar.gz" -C "$prefix" --strip-components=1
+          sudo rm -rf "$OCAML_ROOT"
           sudo rm /usr/local/bin/opam
           mkdir -p check
           cd check
@@ -125,7 +131,9 @@ jobs:
           run() { env -i HOME="$HOME" TERM=dumb PATH="$prefix/bin:/usr/bin:/bin" "$@"; }
           wrapped() {
             run CAML_LD_LIBRARY_PATH="$prefix/lib/stublibs:$prefix/lib/ocaml/stublibs" \
-                OCAML_TOPLEVEL_PATH="$prefix/lib/toplevel" "$@"
+                OCAML_TOPLEVEL_PATH="$prefix/lib/toplevel" \
+                OCAMLLIB="$prefix/lib/ocaml" \
+                OCAMLFIND_CONF="$prefix/lib/findlib.conf" "$@"
           }
           [[ "$(run ocamlopt -where)" == "$prefix/lib/ocaml" ]]
           run ocamlopt -version
@@ -133,8 +141,14 @@ jobs:
           ./sleeper
           wrapped ocaml script.ml
           wrapped utop -version
+          [[ "$(printf '#require "unix";;\nprint_endline "utop ok";;\n' | wrapped utop -stdin)" == *"utop ok"* ]]
           run ocamllsp --version
           run dune --version
+          mkdir -p proj/bin
+          printf '(lang dune 3.0)\n' > proj/dune-project
+          printf '(executable (name main) (libraries unix))\n' > proj/bin/dune
+          cp sleeper.ml proj/bin/main.ml
+          (cd proj && run dune build && ./_build/default/bin/main.exe)
           if run grep -rIl /home/runner "$prefix/lib/findlib.conf" "$prefix/lib/ocaml/ld.conf"; then
             echo "runner path leaked into config" >&2
             exit 1
@@ -146,6 +160,6 @@ jobs:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
           files: |
-            ocaml-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
-            ocaml-${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz.sha256
+            ocaml-${{ steps.ver.outputs.release }}-linux-x86_64.tar.gz
+            ocaml-${{ steps.ver.outputs.release }}-linux-x86_64.tar.gz.sha256
           generate_release_notes: true

@@ -186,17 +186,19 @@ XLA_TARGET=cuda12 mix deps.compile exla --force
 Installs [glow](https://github.com/charmbracelet/glow), a terminal Markdown
 viewer, from the upstream releases. It isn't in Ubuntu 22.04's apt.
 
-### `ocaml-bootstrap [VERSION]`
+### `ocaml-bootstrap [RELEASE]`
 
 Installs OCaml 5 with `ocamlfind`, `utop`, `ocaml-lsp-server` and `dune` from
 a tarball built by `build-ocaml.yml`. apt's OCaml is 4.13, and building with
 opam on NFS after each wipe would be slow.
 
-An OCaml install records its own absolute path, so the workflow builds it at
-the real `$SGO/ocaml/<version>` path. It only works for the login set in
-`OCAML_ROOT`. There is no opam on the cluster: adding a package means editing
-the workflow and rebuilding. `~/bin/ocaml` and `~/bin/utop` are wrappers that
-set the variables `opam env` would.
+The workflow builds at a neutral prefix, and the toolchain runs from wherever
+it's unpacked (OCaml 5.5 finds its stdlib relative to the compiler). There is
+no opam on the cluster: adding a package means editing the workflow and
+rebuilding under a new `ocaml-<version>-r<N>` tag; the bootstrap's default
+release then picks it up. `~/bin/ocaml`, `~/bin/utop` and `~/bin/ocamllsp` are
+wrappers that set the variables `opam env` would, plus `OCAMLLIB` and
+`OCAMLFIND_CONF` for the paths utop and ocamllsp carry from the build.
 
 ### `ghidra-bootstrap [VERSION]`
 

@@ -8,41 +8,48 @@
 # tarball is an opam switch, but no opam is needed here. Adding a package means
 # changing the workflow and rebuilding.
 #
-# The toolchain records its absolute path at build time, so it only runs from
-# $SGO/ocaml/<version> with the $SGO the workflow built for. The check at the
-# end catches a mismatch rather than leaving a subtly broken install.
+# The workflow builds at a neutral prefix; OCaml 5.5 runs from wherever it is
+# unpacked. utop and ocamllsp embed the build-time stdlib and findlib paths,
+# so their ~/bin wrappers set OCAMLLIB and OCAMLFIND_CONF.
 #
-# Usage:  ocaml-bootstrap [VERSION]
+# Usage:  ocaml-bootstrap [RELEASE]     e.g. 5.5.2-r1: OCaml version, plus
+#                                       -r<N> for a rebuild of it
 # Env override:  OCAML_BOOTSTRAP_REPO=owner/repo (defaults to dustyway/42-dev-bootstrap)
 #
 # ─── Placement (same reasoning as emacs-/postgres-bootstrap) ─────────────────
 # Toolchain       → $SGO/ocaml/<version>/         persistent on sgoinfre
-# Cached tarball  → $SGO/.cache/ocaml-<version>…  re-extract on wipe
-# Launchers       → ~/bin/ocaml*, utop, dune      symlinks; ocaml + utop are
-#                                                 wrappers (see below)
+# Cached tarball  → $SGO/.cache/ocaml-<release>…  re-extract on wipe
+# Launchers       → ~/bin/ocaml*, utop, dune      symlinks; ocaml, utop and
+#                                                 ocamllsp are wrappers (below)
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
-VERSION="${1:-5.5.2}"
+RELEASE="${1:-5.5.2-r1}"
+VERSION="${RELEASE%-r*}"
 REPO="${OCAML_BOOTSTRAP_REPO:-dustyway/42-dev-bootstrap}"
-ASSET="ocaml-${VERSION}-linux-x86_64.tar.gz"
-URL="https://github.com/${REPO}/releases/download/ocaml-${VERSION}/${ASSET}"
+ASSET="ocaml-${RELEASE}-linux-x86_64.tar.gz"
+URL="https://github.com/${REPO}/releases/download/ocaml-${RELEASE}/${ASSET}"
+# The directory is per OCaml version; the marker records the release, so a
+# rebuild replaces it.
 APP_HOME="$SGO/ocaml/${VERSION}"
 
-if needs_install "$APP_HOME" "$VERSION" bin/ocamlopt; then
+if needs_install "$APP_HOME" "$RELEASE" bin/ocamlopt; then
     fetch "$URL" "$CACHE/$ASSET"
     fetch "$URL.sha256" "$CACHE/$ASSET.sha256"
     verify_sha256 "$CACHE/$ASSET" "$CACHE/$ASSET.sha256"
-    install_tarball "$CACHE/$ASSET" "$APP_HOME" "$VERSION" --strip-components=1
+    install_tarball "$CACHE/$ASSET" "$APP_HOME" "$RELEASE" --strip-components=1
+    # Drop other releases' tarballs: sgoinfre's quota is tight.
+    find "$CACHE" -maxdepth 1 -name 'ocaml-*-linux-x86_64.tar.gz*' \
+        ! -name "$ASSET" ! -name "$ASSET.sha256" -delete
 fi
 
-# Compared resolved, so a symlink in the path isn't reported as a mismatch.
+# The compiler must find its stdlib where it was unpacked. Compared resolved,
+# so a symlink in the path isn't reported as a mismatch.
 where=$("$APP_HOME/bin/ocamlopt" -where)
 if [[ "$(readlink -f "$where")" != "$(readlink -f "$APP_HOME/lib/ocaml")" ]]; then
-    log "built for $where, installed at $APP_HOME/lib/ocaml." >&2
-    die "Update OCAML_ROOT in build-ocaml.yml and rebuild."
+    die "ocamlopt looks for its stdlib in $where, not $APP_HOME/lib/ocaml: this build isn't relocatable"
 fi
 
 for tool in "$APP_HOME"/bin/ocaml* "$APP_HOME/bin/dune"; do
@@ -50,12 +57,15 @@ for tool in "$APP_HOME"/bin/ocaml* "$APP_HOME/bin/dune"; do
 done
 
 # The toplevels load C stubs and topfind from paths opam normally exports via
-# `opam env`. Set them here so `ocaml` and `utop` work without opam.
-for tool in ocaml utop; do
+# `opam env`. utop and ocamllsp (merlin) also carry the build prefix's stdlib
+# and findlib.conf paths; OCAMLLIB and OCAMLFIND_CONF point them here.
+for tool in ocaml utop ocamllsp; do
     write_launcher "$tool" <<EOF
 #!/bin/sh
 export CAML_LD_LIBRARY_PATH="$APP_HOME/lib/stublibs:$APP_HOME/lib/ocaml/stublibs"
 export OCAML_TOPLEVEL_PATH="$APP_HOME/lib/toplevel"
+export OCAMLLIB="$APP_HOME/lib/ocaml"
+export OCAMLFIND_CONF="$APP_HOME/lib/findlib.conf"
 exec "$APP_HOME/bin/$tool" "\$@"
 EOF
 done

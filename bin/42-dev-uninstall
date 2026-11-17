@@ -74,6 +74,7 @@ cleanup_globs_for() {
         actionlint)     printf '%s' "$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt" ;;
         graphviz)       printf '%s' "$SGO/graphviz:$SGO/.cache/graphviz-*" ;;
         cuda)           printf '%s' "$SGO/cuda:$SGO/cuda.tmp:$SGO/.cache/cuda-debs" ;;
+        ocaml)          printf '%s' "$SGO/ocaml:$SGO/.cache/ocaml-*-linux-x86_64.tar.gz*" ;;
         inotify-tools)  printf '%s' "$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256" ;;
         aider)          printf '%s' "$SGO/uv-tools/aider-chat:$HOME/.local/share/uv/tools/aider-chat:$HOME/.local/bin/aider" ;;
         opencode)       printf '%s' "$SGO/mise-data/installs/npm-opencode-cli:$SGO/mise-data/installs/github-anomalyco-opencode:$SGO/mise-data/shims/opencode" ;;
