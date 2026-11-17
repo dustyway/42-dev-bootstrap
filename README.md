@@ -49,7 +49,7 @@ extras for the tools it finds there:
 
 | Tool in config | Extra setup |
 |---|---|
-| `erlang` | Builds wxWidgets 3.2 on `/sgoinfre` (`wx-bootstrap`) and compiles Erlang from source against it with the `asdf-erlang` plugin. mise's default prebuilt Erlang links against wx 3.0, which the cluster doesn't have, so `:observer.start()` would fail. |
+| `erlang` | Installs a CI-built wxWidgets 3.2 on `/sgoinfre` (`wx-bootstrap`, from this repo's `wx-<version>` release, sha256-verified) and compiles Erlang from source against it with the `asdf-erlang` plugin. mise's default prebuilt Erlang links against wx 3.0, which the cluster doesn't have, so `:observer.start()` would fail. |
 | `erlang` or `elixir` | Adds the wx library path to `LD_LIBRARY_PATH` in `~/.profile`, and a logger filter to `~/.iex.exs` that hides harmless GTK3 style-context warnings. |
 | `elixir` | Installs the `hex`, `rebar` and `phx_new` archives and the `livebook` escript for the active Elixir version. Without this, a version bump makes the next `mix deps.get` prompt, and `livebook` drops off `PATH`. |
 | `node` | Reinstalls global npm packages listed in `~/Apps/etc/npm-globals.txt`. |
@@ -62,7 +62,8 @@ added once.
 
 Installs Emacs with tree-sitter and native compilation (GTK3/X11). The
 tarball is built by `.github/workflows/build-emacs.yml` and published as a
-release on this repo. To build a new version, push an `emacs-<VERSION>` tag.
+release on this repo, with a `.sha256` file that the bootstrap requires. To
+build a new version, push an `emacs-<VERSION>` tag.
 
 ### `postgres-bootstrap`
 
@@ -456,7 +457,7 @@ changed, so running them in a test touches your real installs.
 `bin/42-dev-validate` lists them:
 
 ```
-[ok] lib/bootstrap.bash: 13 of 24 bootstraps
+[ok] lib/bootstrap.bash: 15 of 24 bootstraps
 [todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): cuda-bootstrap …
 ```
 
