@@ -19,10 +19,39 @@ Anything over ~500 MB can't go in `$HOME` (quota) or `/goinfre` (volatile), so
 it goes on `/sgoinfre`, which can still be wiped. Each script puts its files
 in the right place and reinstalls them when they disappear.
 
-Most scripts follow the same layout: the install goes to
-`/sgoinfre/<tool>/<version>/`, the downloaded archive is cached in
-`/sgoinfre/.cache/`, and launchers are symlinks in `~/bin`. Where upstream
-publishes checksums, downloads are verified against them.
+## How it works
+
+Together, the scripts work like a small package manager for one user:
+
+- **Registry and commands.** `lib/components.bash` lists every component.
+  `42-dev-install` and `42-dev-uninstall` add or remove one, including its
+  line in the heal manifest.
+- **Desired state.** `~/Apps/etc/heal.list` lists what you want installed.
+  `42-dev-heal` runs it on every login and reinstalls whatever is missing;
+  new terminals report failed entries and storage that is nearly full.
+- **Layout.** An install goes to `/sgoinfre/<tool>/<version>/`, its download
+  is cached in `/sgoinfre/.cache/`, and launchers go in `~/bin`.
+- **Pinned versions.** Each bootstrap has a default version, or takes one as
+  an argument. A marker file in the install records what's there, and a
+  different version means a reinstall.
+- **Verified downloads.** Every archive a bootstrap downloads itself is
+  checked against a sha256 published upstream, the digest GitHub records for
+  a release asset, or apt's signed index. A mismatch deletes the download.
+  Tools installed through mise, npm or uv rely on those tools' own checks.
+- **Atomic installs.** An install is assembled in `<install>.tmp` and swapped
+  in only when complete, so a failed or interrupted install leaves the
+  previous one working.
+- **One run at a time.** Runs of the same bootstrap with the same arguments
+  take turns, through a lock on `/sgoinfre` that also covers a second machine.
+- **Own builds.** Tools without a usable upstream binary (Emacs, wxWidgets,
+  OCaml, inotify-tools) are built by this repo's GitHub Actions and
+  published as releases with a `.sha256` file. A `-r<N>` tag marks a rebuild
+  of the same version, which installs pick up on their next run.
+- **Cache pruning.** After an upgrade, the bootstraps for the larger tools
+  delete downloads the new version no longer needs.
+- **Shared code and checks.** The bootstraps share `lib/bootstrap.bash`
+  (see [Writing a bootstrap](#writing-a-bootstrap)), and `42-dev-validate`
+  checks the scripts, the registry and the library's use.
 
 ## Scripts
 
@@ -607,6 +636,23 @@ Would fit the same pattern:
 - CLI tools: `ripgrep`, `fd`, `bat`, `jq`, `just`, `direnv`, `zoxide`,
   `delta`, perhaps as one script.
 - `uv-bootstrap`: Astral's Python toolchain, alongside mise.
+
+Package-manager features not built yet, roughly in order of usefulness:
+
+- **Update checking.** Versions are pinned inside each script, and nothing
+  reports a newer upstream release. A `42-dev-outdated` command could
+  compare each pinned version with upstream's latest.
+- **Metadata in one place.** A tool's version, download URL and checksum
+  source live in its script, not in the registry, so "what's pinned, what's
+  installed" can't be answered without reading code.
+- **File lists.** `42-dev-uninstall` removes a component by path patterns
+  rather than a record of the files its install created, so a pattern can
+  miss something.
+- **Declared dependencies.** Some exist (`mise-bootstrap` needs
+  `wx-bootstrap`, `jb-bootstrap` runs `jb-sync-elixir-sdk`), but they are
+  wired into the scripts rather than declared.
+- **Rollback.** An upgrade replaces the previous version, so there is
+  nothing to go back to.
 
 ## License
 
