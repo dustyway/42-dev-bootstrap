@@ -35,6 +35,12 @@ Installs a JetBrains IDE.
 - Adds a `~/bin/<slug>` launcher and a `.desktop` entry with the IDE's icon.
 - Installs plugins from GitHub releases, since the marketplace often lags.
 - `<CODE>@VERSION` pins an IDE release; `owner/repo@tag` pins a plugin.
+  Without a pin, the IDE is the latest release at first install and then
+  updates itself; the script only reinstalls it after a wipe or a pin change.
+- Verifies the IDE tarball against JetBrains' published sha256, and each
+  plugin zip against the digest GitHub records. A tarball cached before this
+  check existed is extracted unverified once and replaced on the next
+  download.
 - Backs up selected IDE settings to `$HOME/Apps/etc/jetbrains-backup/` on every
   login and restores them after a `/sgoinfre` wipe.
 
@@ -456,15 +462,18 @@ directories:
 BOOTSTRAP_SGO=/goinfre/$USER/sgo-test HOME=/goinfre/$USER/home-test bin/fzf-bootstrap
 ```
 
-`42-dev-install` and `42-dev-uninstall` honour `BOOTSTRAP_SGO` too. Scripts
-not yet on the library still find `/sgoinfre` from `$USER`, even with `HOME`
-changed, so running them in a test touches your real installs.
-`bin/42-dev-validate` lists them:
+`42-dev-install` and `42-dev-uninstall` honour `BOOTSTRAP_SGO` too. A script
+that found `/sgoinfre` from `$USER` itself would ignore it, so a test would
+touch your real installs. `bin/42-dev-validate` counts the bootstraps on the
+library, fails on one that still does its own lookup, and lists any other
+script that does:
 
 ```
-[ok] lib/bootstrap.bash: 20 of 24 bootstraps
-[todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): jb-bootstrap
+[ok] lib/bootstrap.bash: 21 of 24 bootstraps
 ```
+
+The three others don't look up `/sgoinfre`: `docker` and `repo` work on
+`/goinfre`, and `aider` installs into `UV_TOOL_DIR` from your profile.
 
 ## mise runtimes
 

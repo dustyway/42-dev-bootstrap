@@ -7,7 +7,8 @@
 # copy (~/Apps/bin → ~/Apps/lib). Sourcing sets:
 #
 #   BS_NAME   the script's name, used in log lines and the version marker
-#   SGO       the user's /sgoinfre directory (BOOTSTRAP_SGO overrides it,
+#             (set BS_LOG_NAME to change only the log prefix)
+#   SGO      the user's /sgoinfre directory (BOOTSTRAP_SGO overrides it,
 #             so tests can point a bootstrap at a scratch directory)
 #   CACHE     $SGO/.cache, where downloads are kept for re-extraction
 #
@@ -24,7 +25,7 @@
 
 BS_NAME="${BS_NAME:-$(basename "$0")}"
 
-log() { printf '[%s] %s\n' "$BS_NAME" "$*"; }
+log() { printf '[%s] %s\n' "${BS_LOG_NAME:-$BS_NAME}" "$*"; }
 die() { log "$*" >&2; exit 1; }
 
 if [[ -n "${BOOTSTRAP_SGO:-}" ]]; then
@@ -121,7 +122,7 @@ needs_install() {
     local app="$1" version="$2" bin="$3" have
     have=$(installed_version "$app")
     [[ -x "$app/$bin" && "$have" == "$version" ]] && return 1
-    [[ -n "$have" && "$have" != "$version" ]] && log "switching version: '$have' -> '$version'"
+    [[ -n "$have" && "$have" != "$version" ]] && log "switching version: '$have' -> '${version:-unpinned}'"
     return 0
 }
 
@@ -132,7 +133,7 @@ needs_install() {
 # until the next run.
 install_begin() {
     local app="$1" version="$2"
-    log "installing $version to $app"
+    log "installing ${version:+$version }to $app"
     rm -rf "$app.tmp"
     mkdir -p "$app.tmp"
 }

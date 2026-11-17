@@ -77,7 +77,7 @@ cleanup_globs_for() {
         inotify-tools)  printf '%s' "$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256" ;;
         aider)          printf '%s' "$SGO/uv-tools/aider-chat:$HOME/.local/share/uv/tools/aider-chat:$HOME/.local/bin/aider" ;;
         opencode)       printf '%s' "$SGO/mise-data/installs/npm-opencode-cli:$SGO/mise-data/installs/github-anomalyco-opencode:$SGO/mise-data/shims/opencode" ;;
-        jetbrains/*)    printf '%s:%s/.cache/jb-%s.tar.gz' "$SGO/$1" "$SGO" "${1#jetbrains/}" ;;
+        jetbrains/*)    printf '%s:%s.tmp:%s/.cache/jb-%s.tar.gz:%s/.cache/jb-%s.tar.gz.sha256' "$SGO/$1" "$SGO/$1" "$SGO" "${1#jetbrains/}" "$SGO" "${1#jetbrains/}" ;;
         *)              printf '%s' "$SGO/$1" ;;
     esac
 }

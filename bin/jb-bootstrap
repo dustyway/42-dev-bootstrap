@@ -2,11 +2,17 @@
 # jb-bootstrap — idempotent installer/healer for any JetBrains IDE on
 # 42-school clusters. Safe to run every login.
 #
-# Usage:  jb-bootstrap <PRODUCT_CODE>
-# Example (in ~/.bash_profile, install multiple IDEs side-by-side):
+# Usage:  jb-bootstrap <PRODUCT_CODE>[@VERSION] [owner/repo[@tag] ...]
+# Example (lines in ~/Apps/etc/heal.list, IDEs side by side):
 #   jb-bootstrap IIU   # IntelliJ IDEA Ultimate
-#   jb-bootstrap WS    # WebStorm
-#   jb-bootstrap CL    # CLion
+#   jb-bootstrap WS KronicDeth/intellij-elixir
+#   jb-bootstrap CL@2026.2
+#
+# Downloads are resolved through JetBrains' releases API and sha256-verified
+# against the checksum file it links; plugins from GitHub releases are
+# verified against the digest GitHub records. Without @VERSION the IDE is the
+# latest release at first install; it then updates itself in place, and this
+# script only reinstalls it after a wipe (from the cached tarball).
 #
 # ─── School storage layout (the reason this script exists) ────────────────────
 # $HOME       : network (iSCSI), 5 GB quota (10 GB if upgraded via intra shop).
@@ -21,18 +27,21 @@
 #               rules: (a) any folder >30 GB is wiped Sunday night, warnings
 #               on intra daily at 9:42 + email Fridays; (b) folders untouched
 #               for >6 months are cleared. Path is wildcarded in the docs
-#               (/sgoinfre/goinfre/Perso/*<login>*) so always resolve it via
-#               `ls -d` rather than hardcoding.
+#               (/sgoinfre/goinfre/Perso/*<login>*); lib/bootstrap.bash
+#               resolves it (BOOTSTRAP_SGO overrides it for tests).
 #
 # ─── Placement strategy (per IDE — each gets its own subdir) ──────────────────
 # App binary        → $SGO/jetbrains/<slug>         persistent, survives
 #                                                    session changes + other users.
 # Cached tarball    → $SGO/.cache/jb-<slug>.tar.gz  so a sgoinfre wipe only
 #                                                    costs a ~45 s re-extract.
+#                     (+ .sha256)
 # Config + plugins  → $SGO/jetbrains-config/<slug>  small, persists month-to-month.
 # system + logs     → /goinfre/$USER/jetbrains/<slug>/…   indexes rebuilt fast;
 #                                                    NFS stays off the hot path.
 # Launcher          → ~/bin/<slug>                  symlink; ~/bin stays tiny.
+# Settings backup   → ~/Apps/etc/jetbrains-backup/<slug>  curated, restored
+#                                                    after a sgoinfre wipe.
 # Desktop entry     → ~/.local/share/applications/<slug>.desktop
 #                                                    so the IDE shows up in the
 #                                                    GNOME/Unity/KDE launcher.
@@ -58,14 +67,14 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
-[[ $# -ge 1 ]] || { echo "usage: $(basename "$0") <PRODUCT_CODE>[@VERSION] [owner/repo[@tag] ...]" >&2; exit 2; }
+usage() { echo "usage: $(basename "$0") <PRODUCT_CODE>[@VERSION] [owner/repo[@tag] ...]" >&2; exit 2; }
+[[ $# -ge 1 ]] || usage
 SPEC="$1"; shift
 PLUGINS=("$@")
 
-# Optional @version pin. Unpinned specs ride JetBrains' "latest" redirector;
-# pin via CODE@VERSION when a specific build is required for plugin or
-# project compatibility.
+# Optional @version pin; without it, the latest release at first install.
 if [[ "$SPEC" == *@* ]]; then
     CODE="${SPEC%@*}"; VERSION="${SPEC##*@}"
 else
@@ -91,13 +100,12 @@ case "$CODE" in
     RR)  SLUG="rustrover";      LAUNCHER="rustrover"; DISPLAY_NAME="RustRover" ;;
     *)   echo "unknown product code: $CODE" >&2; exit 2 ;;
 esac
-
-# Resolve the real sgoinfre path — docs show it with wildcards, so don't hardcode.
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "sgoinfre path not found for $USER" >&2; exit 1; }
+# Log as [jb-bootstrap:<slug>]; the version marker keeps the script's name.
+BS_LOG_NAME="jb-bootstrap:$SLUG"
 
 APP_HOME="$SGO/jetbrains/$SLUG"
-APP_TARBALL="$SGO/.cache/jb-$SLUG.tar.gz"
+APP_TARBALL="$CACHE/jb-$SLUG.tar.gz"
+APP_SUMS="$APP_TARBALL.sha256"
 APP_CONFIG="$SGO/jetbrains-config/$SLUG"
 GO="/goinfre/$USER/jetbrains/$SLUG"
 
@@ -105,41 +113,42 @@ GO="/goinfre/$USER/jetbrains/$SLUG"
 #    after us. Cheap no-op when they already exist.
 mkdir -p "$GO/system" "$GO/logs" "$APP_CONFIG/config" "$APP_CONFIG/plugins"
 
-# 2. Re-install if: sgoinfre was wiped, this is first run, or the pinned
-#    $VERSION differs from what's on disk. A marker file tracks the currently
-#    installed version (empty = "latest" tracked via redirector); mismatch
-#    triggers a clean reinstall.
-VERSION_MARKER="$APP_HOME/.jb-bootstrap-version"
-installed_version=""
-[[ -f "$VERSION_MARKER" ]] && installed_version=$(cat "$VERSION_MARKER")
-if [[ ! -x "$APP_HOME/bin/$LAUNCHER" || "$installed_version" != "$VERSION" ]]; then
-    if [[ "$installed_version" != "$VERSION" ]]; then
-        echo "[jb-bootstrap:$SLUG] switching version: '$installed_version' -> '${VERSION:-latest}'"
-        rm -f "$APP_TARBALL"
+# 2. Re-install if sgoinfre was wiped, this is the first run, or the pinned
+#    $VERSION differs from the marker (empty = unpinned).
+if needs_install "$APP_HOME" "$VERSION" "bin/$LAUNCHER"; then
+    if [[ "$(installed_version "$APP_HOME")" != "$VERSION" ]]; then
+        # The cache name carries no version, so a cached tarball may be the
+        # wrong one.
+        rm -f "$APP_TARBALL" "$APP_SUMS"
     fi
-    echo "[jb-bootstrap:$SLUG] installing to $APP_HOME"
-    mkdir -p "$(dirname "$APP_TARBALL")"
     if [[ ! -s "$APP_TARBALL" ]]; then
-        if [[ -n "$VERSION" ]]; then
-            # Resolve the specific release's linux tarball URL via JetBrains'
-            # data.services API — the /product?version= redirector is unreliable
-            # for point releases.
-            download_url=$(curl -fsSL "https://data.services.jetbrains.com/products/releases?code=${CODE}&type=release" \
-                | python3 -c "import json,sys; d=json.load(sys.stdin); r=next(r for r in d['${CODE}'] if r['version']=='${VERSION}'); print(r['downloads']['linux']['link'])") \
-                || { echo "[jb-bootstrap:$SLUG] could not resolve download URL for ${CODE} ${VERSION}" >&2; exit 1; }
-        else
-            download_url="https://download.jetbrains.com/product?code=${CODE}&latest&distribution=linux"
-        fi
-        echo "[jb-bootstrap:$SLUG] downloading tarball (${VERSION:-latest})"
-        curl -fL --retry 3 -o "$APP_TARBALL" "$download_url"
+        # The release's linux tarball and its checksum file, from JetBrains'
+        # releases API: the pinned version, or the latest release.
+        api="https://data.services.jetbrains.com/products/releases?code=${CODE}&type=release"
+        [[ -n "$VERSION" ]] || api+="&latest=true"
+        release=$(curl -fsSL --retry 3 "$api" | python3 -I -c '
+import json, sys
+code, version = sys.argv[1], sys.argv[2]
+rels = json.load(sys.stdin)[code]
+r = next(r for r in rels if not version or r["version"] == version)
+d = r["downloads"]["linux"]
+print(r["version"], d["link"], d["checksumLink"])
+' "$CODE" "$VERSION") || die "could not resolve the download for ${CODE} ${VERSION:-latest}"
+        read -r rel_version link sums_link <<<"$release"
+        log "downloading $DISPLAY_NAME $rel_version"
+        fetch "$link" "$APP_TARBALL"
+        # Upstream lists the file under its own name; record it under the
+        # cache name so later re-extracts can verify it too.
+        curl -fsSL --retry 3 "$sums_link" \
+            | awk -v n="$(basename "$APP_TARBALL")" '{ print $1 "  " n; exit }' > "$APP_SUMS" \
+            || die "could not fetch the checksum for $(basename "$link")"
     fi
-    # Extract to a .tmp dir then atomic-rename, so an interrupted extract can't
-    # leave a half-installed $APP_HOME that passes the -x check next login.
-    rm -rf "$APP_HOME.tmp" "$APP_HOME"
-    mkdir -p "$APP_HOME.tmp"
-    tar -xzf "$APP_TARBALL" -C "$APP_HOME.tmp" --strip-components=1
-    mv "$APP_HOME.tmp" "$APP_HOME"
-    printf '%s' "$VERSION" > "$VERSION_MARKER"
+    if [[ -s "$APP_SUMS" ]]; then
+        verify_sha256 "$APP_TARBALL" "$APP_SUMS"
+    else
+        log "cached tarball predates checksum support; extracting it unverified"
+    fi
+    install_tarball "$APP_TARBALL" "$APP_HOME" "$VERSION" --strip-components=1
 fi
 
 # 3. Rewrite idea.properties every run. Redirects the IDE's four runtime dirs
@@ -153,19 +162,13 @@ idea.system.path=$GO/system
 idea.log.path=$GO/logs
 EOF
 
-# 4. Symlink launcher into ~/bin under the slug name. Symlink (not copy) so
-#    upgrades propagate automatically; ~/bin stays tiny to respect $HOME quota.
-mkdir -p "$HOME/bin"
-ln -sf "$APP_HOME/bin/$LAUNCHER" "$HOME/bin/$SLUG"
+# 4. Launcher symlink under the slug name, so upgrades propagate.
+link_launcher "$APP_HOME/bin/$LAUNCHER" "$SLUG"
 
-# 5. Register a Desktop entry so the IDE appears in GNOME/Unity/KDE launchers.
-#    JetBrains tarballs don't ship a .desktop (the Toolbox app does it for
-#    their supported install path); we generate one with absolute paths so it
-#    works regardless of $PATH, and so sgoinfre-path drift auto-heals on each
-#    run. File is per-slug so multiple IDEs coexist.
-desktop_dir="$HOME/.local/share/applications"
-mkdir -p "$desktop_dir"
-cat > "$desktop_dir/$SLUG.desktop" <<DESK
+# 5. Desktop entry, so the IDE appears in the desktop's launcher. JetBrains
+#    tarballs don't ship one. The file name matches what the IDE's own
+#    "Create Desktop Entry" writes, so the two stay idempotent.
+write_desktop_entry "$SLUG" <<DESK
 [Desktop Entry]
 Name=$DISPLAY_NAME
 GenericName=Integrated Development Environment
@@ -178,40 +181,57 @@ Categories=Development;IDE;
 StartupNotify=true
 StartupWMClass=jetbrains-$LAUNCHER
 DESK
-command -v update-desktop-database >/dev/null 2>&1 \
-  && update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
 
-# 6. Install additional plugins from GitHub releases. Each spec is either
-#    "owner/repo" (pulls latest release, including prereleases — the JetBrains
-#    marketplace often lags GitHub by weeks) or "owner/repo@tag" (pins a
-#    specific tag, e.g. to pin past a known-broken newer release).
-#    The tag + extracted dir name are cached in a marker so re-runs are no-ops.
-#    To force a refresh: delete the marker.
+# 6. Plugins from GitHub releases. "owner/repo" follows the latest release,
+#    prereleases included (the JetBrains marketplace often lags GitHub by
+#    weeks); "owner/repo@tag" pins one. A marker records the installed tag and
+#    directory, so re-runs are no-ops; delete it to force a refresh. A plugin
+#    that fails is skipped, so the settings backup below still runs.
 for spec in "${PLUGINS[@]+"${PLUGINS[@]}"}"; do
     if [[ "$spec" == *@* ]]; then
         repo="${spec%@*}"; pinned_tag="${spec##*@}"
         api="https://api.github.com/repos/$repo/releases/tags/$pinned_tag"
-        parse='import json,sys; r=json.load(sys.stdin); z=next(a for a in r["assets"] if a["name"].endswith(".zip")); print(r["tag_name"]); print(z["browser_download_url"])'
     else
-        repo="$spec"
+        repo="$spec"; pinned_tag=""
         api="https://api.github.com/repos/$repo/releases"
-        parse='import json,sys; r=json.load(sys.stdin)[0]; z=next(a for a in r["assets"] if a["name"].endswith(".zip")); print(r["tag_name"]); print(z["browser_download_url"])'
     fi
     marker="$APP_CONFIG/plugins/.jb-bootstrap-${repo//\//_}"
-    meta=$(curl -fsSL "$api" | python3 -c "$parse") \
-        || { echo "[jb-bootstrap:$SLUG] failed to resolve release of $spec" >&2; continue; }
-    tag=$(printf '%s\n' "$meta" | sed -n 1p)
-    url=$(printf '%s\n' "$meta" | sed -n 2p)
+    # tag, zip URL and the zip's sha256 (GitHub's digest; may be empty for
+    # old releases).
+    meta=$(curl -fsSL "$api" | python3 -I -c '
+import json, sys
+r = json.load(sys.stdin)
+if isinstance(r, list):
+    r = r[0]
+z = next(a for a in r["assets"] if a["name"].endswith(".zip"))
+print(r["tag_name"], z["browser_download_url"], (z.get("digest") or "").removeprefix("sha256:"))
+' 2>/dev/null) || { log "failed to resolve release of $spec; skipping" >&2; continue; }
+    read -r tag url digest <<<"$meta"
     if [[ -f "$marker" ]] && [[ "$(head -n1 "$marker")" == "$tag" ]]; then
         continue
     fi
-    echo "[jb-bootstrap:$SLUG] installing plugin $repo@$tag"
+    log "installing plugin $repo@$tag"
+    tmp=$(mktemp -d)
+    # In a subshell, so fetch/verify_sha256's die skips this plugin only.
+    if ! (
+        fetch "$url" "$tmp/plugin.zip"
+        if [[ -n "$digest" ]]; then
+            printf '%s  plugin.zip\n' "$digest" > "$tmp/plugin.zip.sha256"
+            verify_sha256 "$tmp/plugin.zip" "$tmp/plugin.zip.sha256"
+        else
+            log "no sha256 digest on GitHub for $repo@$tag; installing unverified"
+        fi
+    ); then
+        rm -rf "$tmp"
+        log "plugin $repo@$tag not installed" >&2
+        continue
+    fi
     if [[ -f "$marker" ]]; then
         old_dir=$(sed -n 2p "$marker")
-        [[ -n "$old_dir" && -d "$APP_CONFIG/plugins/$old_dir" ]] && rm -rf "$APP_CONFIG/plugins/$old_dir"
+        if [[ -n "$old_dir" && -d "$APP_CONFIG/plugins/$old_dir" ]]; then
+            rm -rf "$APP_CONFIG/plugins/$old_dir"
+        fi
     fi
-    tmp=$(mktemp -d)
-    curl -fsSL --retry 3 -o "$tmp/plugin.zip" "$url"
     topdir=$(unzip -Z -1 "$tmp/plugin.zip" | head -n1 | cut -d/ -f1)
     unzip -q -o "$tmp/plugin.zip" -d "$APP_CONFIG/plugins"
     rm -rf "$tmp"
@@ -241,7 +261,7 @@ if [[ -d "$APP_CONFIG/config/options" ]]; then
         fi
     done
 elif [[ -d "$BACKUP/options" ]]; then
-    echo "[jb-bootstrap:$SLUG] restoring IDE config from $BACKUP"
+    log "restoring IDE config from $BACKUP"
     mkdir -p "$APP_CONFIG/config"
     for item in "${KEEP[@]}"; do
         [[ -e "$BACKUP/$item" ]] || continue
