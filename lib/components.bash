@@ -35,7 +35,7 @@ COMPONENTS=(
     "mise-data|mise-bootstrap|mise-data|mise-bootstrap|safe|mise runtimes (reads ~/.config/mise/config.toml) varies"
     "aider|aider-bootstrap|uv-tools/aider-chat|aider-bootstrap|safe|aider terminal pair-programmer via uv tool ~500 MB"
     "opencode|opencode-bootstrap|mise-data/installs/npm-opencode-cli|opencode-bootstrap|mise-bootstrap|safe|OpenCode AI coding agent (restored transitively by mise-bootstrap)"
-    "cuda|cuda-bootstrap|cuda|cuda-bootstrap|safe|CUDA libraries (extracts .debs without sudo) ~3.5 GB"
+    "cuda|cuda-bootstrap|cuda|cuda-bootstrap|safe|CUDA libraries (extracts .debs without sudo) ~3.7 GB + 1.7 GB cached .debs"
     "ollama|ollama-bootstrap|ollama|ollama-bootstrap|safe|Ollama daemon + model pulls from ~/Apps/etc/ollama-models.txt"
     "jetbrains/idea-ultimate|jb-bootstrap IIU|jetbrains/idea-ultimate|jb-bootstrap[[:space:]]+IIU([[:space:]@]|\$)|safe|IntelliJ IDEA Ultimate ~4 GB"
     "jetbrains/idea-community|jb-bootstrap IIC|jetbrains/idea-community|jb-bootstrap[[:space:]]+IIC([[:space:]@]|\$)|safe|IntelliJ IDEA Community ~1 GB"

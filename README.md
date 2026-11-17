@@ -156,8 +156,13 @@ the cluster's rootless Docker (see `docker-bootstrap`).
 ### `cuda-bootstrap [CUDA_PKG_SUFFIX]`
 
 Installs CUDA 12, cuDNN 9 and NCCL 2 libraries without sudo, for GPU
-EXLA (Nx/Axon). Downloads the packages from NVIDIA's Ubuntu 22.04 repository
-and extracts them to `$SGO/cuda/`. The cached packages take about 2.5 GB.
+EXLA (Nx/Axon). Downloads the packages from NVIDIA's Ubuntu 22.04 repository,
+verifies each against the sha256 in the repository's package index, and
+extracts them to `$SGO/cuda/` (about 3.7 GB, plus 1.7 GB of cached packages).
+The tree is assembled in `$SGO/cuda.tmp` and swapped in when complete, so
+switching versions never mixes libraries from two CUDA releases; the packages
+are unpacked on local `/goinfre`, and cached packages the current version no
+longer uses are deleted.
 
 The default is CUDA 12.9 (`12-9`), which matches XLA's `nvrtc-builtins`
 library; pass e.g. `12-8` for another minor version. `libxla_extension.so`
@@ -457,8 +462,8 @@ changed, so running them in a test touches your real installs.
 `bin/42-dev-validate` lists them:
 
 ```
-[ok] lib/bootstrap.bash: 19 of 24 bootstraps
-[todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): cuda-bootstrap jb-bootstrap
+[ok] lib/bootstrap.bash: 20 of 24 bootstraps
+[todo] ignore BOOTSTRAP_SGO (not on lib/bootstrap.bash): jb-bootstrap
 ```
 
 ## mise runtimes

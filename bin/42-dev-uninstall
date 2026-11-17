@@ -73,6 +73,7 @@ cleanup_globs_for() {
         glow)           printf '%s' "$SGO/glow:$SGO/.cache/glow_*.tar.gz:$SGO/.cache/glow_*_checksums.txt:$HOME/bin/glow" ;;
         actionlint)     printf '%s' "$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt" ;;
         graphviz)       printf '%s' "$SGO/graphviz:$SGO/.cache/graphviz-*" ;;
+        cuda)           printf '%s' "$SGO/cuda:$SGO/cuda.tmp:$SGO/.cache/cuda-debs" ;;
         inotify-tools)  printf '%s' "$SGO/inotify-tools:$SGO/.cache/inotify-tools-*.tar.gz:$SGO/.cache/inotify-tools-*.tar.gz.sha256" ;;
         aider)          printf '%s' "$SGO/uv-tools/aider-chat:$HOME/.local/share/uv/tools/aider-chat:$HOME/.local/bin/aider" ;;
         opencode)       printf '%s' "$SGO/mise-data/installs/npm-opencode-cli:$SGO/mise-data/installs/github-anomalyco-opencode:$SGO/mise-data/shims/opencode" ;;

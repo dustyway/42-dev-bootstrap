@@ -2,8 +2,14 @@
 # cuda-bootstrap — rootless CUDA 12 + cuDNN 9 + NCCL 2 for sgoinfre.
 #
 # Downloads .deb packages from NVIDIA's official CUDA network repo for Ubuntu
-# 22.04 (jammy), extracts them to $SGO/cuda/lib/, and creates minimal NVSHMEM
+# 22.04 (jammy), each sha256-verified against the repo's package index,
+# flattens them into $SGO/cuda/{lib,bin,nvvm}, and creates minimal NVSHMEM
 # stubs. No sudo required. Safe to re-run every login (idempotent).
+#
+# The tree is assembled in $SGO/cuda.tmp and swapped in when complete, so a
+# version switch never mixes libraries from two CUDA versions. The .debs are
+# unpacked on local /goinfre, not on NFS. Cached .debs no longer used are
+# removed after an install.
 #
 # Required by: EXLA 0.11+ (xla 0.10+) with XLA_TARGET=cuda12 for GPU-
 # accelerated Nx/Axon. After running this, recompile EXLA in your project:
@@ -23,185 +29,168 @@
 #
 # ─── Placement ────────────────────────────────────────────────────────────────
 # Libraries   → $SGO/cuda/lib/           extracted .so files + NVSHMEM stubs
+# Tools       → $SGO/cuda/bin/           ptxas, nvlink, …
+# Device IR   → $SGO/cuda/nvvm/          libdevice for XLA
 # Cached debs → $SGO/.cache/cuda-debs/  ~2.5 GB, kept for re-extract after wipes
+# Unpacking   → /goinfre/$USER/cuda-bootstrap.*  temporary, local disk
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 CUDA_PKG="${1:-12-9}"
 REPO_BASE="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64"
 
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[cuda-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
-
 CUDA_DIR="$SGO/cuda"
-LIB_DIR="$CUDA_DIR/lib"
-BIN_DIR="$CUDA_DIR/bin"
-NVVM_DIR="$CUDA_DIR/nvvm"
-CACHE_DIR="$SGO/.cache/cuda-debs"
-MARKER="$CUDA_DIR/.cuda-bootstrap-version"
+STAGE="$CUDA_DIR.tmp"
+DEB_CACHE="$CACHE/cuda-debs"
 
-mkdir -p "$LIB_DIR" "$BIN_DIR" "$NVVM_DIR" "$CACHE_DIR"
+# What a complete install has; any missing file triggers a reinstall.
+REQUIRED=(
+    lib/libcudart.so.12
+    lib/libcudnn.so.9
+    lib/libnccl.so.2
+    lib/libnvshmem_host.so.3
+    bin/ptxas
+    nvvm/libdevice/libdevice.10.bc
+)
 
-# ── Idempotency check ─────────────────────────────────────────────────────────
-installed=""
-[[ -f "$MARKER" ]] && installed=$(cat "$MARKER")
-
-if [[ "$installed" == "$CUDA_PKG" && \
-      -f "$LIB_DIR/libcudart.so.12" && \
-      -f "$LIB_DIR/libcudnn.so.9" && \
-      -f "$LIB_DIR/libnccl.so.2" && \
-      -f "$LIB_DIR/libnvshmem_host.so.3" && \
-      -f "$BIN_DIR/ptxas" && \
-      -f "$NVVM_DIR/libdevice/libdevice.10.bc" ]]; then
-    exit 0
-fi
-
-[[ -n "$installed" && "$installed" != "$CUDA_PKG" ]] && \
-    echo "[cuda-bootstrap] switching version: '$installed' -> '$CUDA_PKG'"
-
-# ── Fetch Packages index ──────────────────────────────────────────────────────
-echo "[cuda-bootstrap] fetching NVIDIA package index..."
-PKGS_TMP=$(mktemp)
-trap 'rm -f "$PKGS_TMP"' EXIT
-curl -fsSL --retry 3 "${REPO_BASE}/Packages.gz" | gunzip > "$PKGS_TMP"
-
-# Returns the repo-relative .deb path for the first matching package name.
-find_pkg() {
-    awk -v target="$1" '
-        /^Package: / { pkg = $2 }
-        /^Filename: / && pkg == target { print $2; exit }
-    ' "$PKGS_TMP"
+complete() {
+    [[ "$(installed_version "$CUDA_DIR")" == "$CUDA_PKG" ]] || return 1
+    local f
+    for f in "${REQUIRED[@]}"; do
+        [[ -e "$CUDA_DIR/$f" ]] || return 1
+    done
 }
 
-# Returns the repo-relative .deb path for the LAST matching package name
-# (useful for packages like libnccl2 that appear many times with different
-# CUDA-version suffixes; the last entry in the index is typically the newest).
-find_pkg_last() {
-    awk -v target="$1" '
-        /^Package: / { pkg = $2 }
-        /^Filename: / && pkg == target { last = $2 }
-        END { print last }
-    ' "$PKGS_TMP"
+# ── Package index ─────────────────────────────────────────────────────────────
+# pkg_entry NAME [last] — "<repo path> <sha256>" of NAME's first stanza in the
+# index, or its last one with `last` (packages like libnccl2 appear once per
+# CUDA version; the last entry is typically the newest).
+pkg_entry() {
+    awk -v t="$1" -v want_last="${2:-}" '
+        /^Package: /  { p = $2; fn = ""; sh = "" }
+        /^Filename: / { fn = $2 }
+        /^SHA256: /   { sh = $2 }
+        /^$/ {
+            if (p == t && fn != "") {
+                r = fn " " sh
+                if (!want_last) { print r; done = 1; exit }
+            }
+            p = ""
+        }
+        END {
+            if (done) exit
+            if (p == t && fn != "") r = fn " " sh
+            if (r != "") print r
+        }' "$WORK/Packages"
 }
 
-# ── Download + extract one .deb, flattening into LIB_DIR / BIN_DIR ───────────
+# copy_flat FIND_ARGS... -- DEST
+# Copy files and symlinks matched by `find "$WORK/x" FIND_ARGS` into DEST,
+# without their directories. Symlink targets that are absolute paths (/usr/…)
+# become bare file names, so they resolve inside the flat directory.
+copy_flat() {
+    local args=() dest f target
+    while [[ "$1" != -- ]]; do args+=("$1"); shift; done
+    dest="$2"
+    while IFS= read -r f; do
+        if [[ -L "$f" ]]; then
+            target=$(readlink "$f")
+            [[ "$target" == /* ]] && target=$(basename "$target")
+            ln -sfn "$target" "$dest/$(basename "$f")"
+        else
+            install -m 0755 "$f" "$dest/$(basename "$f")"
+        fi
+    done < <(find "$WORK/x" "${args[@]}" \( -type f -o -type l \))
+}
+
+USED_DEBS=()
+
+# install_deb NAME [last] — download (cached), verify, unpack into $STAGE.
 install_deb() {
-    local pkg="$1" use_last="${2:-}"
-    local relpath
-    if [[ -n "$use_last" ]]; then
-        relpath=$(find_pkg_last "$pkg")
-    else
-        relpath=$(find_pkg "$pkg")
-    fi
-    if [[ -z "$relpath" ]]; then
-        echo "[cuda-bootstrap] WARNING: '$pkg' not found in repo — skipping" >&2
-        return 0
-    fi
-    local fname
+    local entry relpath sha fname cached
+    entry=$(pkg_entry "$1" "${2:-}")
+    [[ -n "$entry" ]] || die "'$1' not found in NVIDIA's package index"
+    read -r relpath sha <<<"$entry"
     fname=$(basename "$relpath")
-    local cached="$CACHE_DIR/$fname"
+    cached="$DEB_CACHE/$fname"
 
-    if [[ ! -s "$cached" ]]; then
-        echo "[cuda-bootstrap] downloading $pkg ..."
-        curl -fL --retry 3 -o "$cached" "${REPO_BASE}/${relpath#./}"
-    fi
+    fetch "$REPO_BASE/${relpath#./}" "$cached"
+    printf '%s  %s\n' "$sha" "$fname" > "$WORK/$fname.sha256"
+    verify_sha256 "$cached" "$WORK/$fname.sha256"
+    USED_DEBS+=("$fname")
 
-    echo "[cuda-bootstrap] extracting $fname ..."
-    local tmp
-    tmp=$(mktemp -d)
-    dpkg --extract "$cached" "$tmp"
-
-    # Flatten all shared libraries into LIB_DIR.
-    # Debian runtime packages ship both the versioned file (.so.X.Y.Z) and its
-    # SONAME symlink (.so.X or .so.X.Y) in the same package; both land here.
-    find "$tmp" \( -name '*.so*' \) \( -type f -o -type l \) | while IFS= read -r f; do
-        local bname dest target
-        bname=$(basename "$f")
-        dest="$LIB_DIR/$bname"
-        if [[ -L "$f" ]]; then
-            target=$(readlink "$f")
-            # Targets may be absolute paths (/usr/lib/…) — strip to filename so
-            # the symlink resolves correctly inside our flat LIB_DIR.
-            [[ "$target" = /* ]] && target=$(basename "$target")
-            ln -sf "$target" "$dest" 2>/dev/null || true
-        else
-            install -m 0755 "$f" "$dest"
+    log "extracting $fname"
+    rm -rf "$WORK/x"
+    mkdir -p "$WORK/x"
+    dpkg-deb -x "$cached" "$WORK/x"
+    # Runtime packages ship the versioned .so and its SONAME symlink together.
+    copy_flat -name '*.so*' -- "$STAGE/lib"
+    # cuda-nvcc ships ptxas, nvlink, … under usr/local/cuda-X.Y/bin/.
+    copy_flat -path '*/bin/*' -- "$STAGE/bin"
+    # nvvm/libdevice/libdevice.10.bc, which XLA finds through
+    # --xla_gpu_cuda_data_dir.
+    local nvvm
+    for nvvm in "$WORK"/x/usr/local/cuda-*/nvvm; do
+        if [[ -d "$nvvm" ]]; then
+            cp -rn "$nvvm/." "$STAGE/nvvm/"
         fi
     done
-
-    # Flatten executables from any bin/ directory into BIN_DIR.
-    # cuda-nvcc packages ship ptxas, nvlink, etc. under usr/local/cuda-X.Y/bin/.
-    find "$tmp" -path '*/bin/*' \( -type f -o -type l \) | while IFS= read -r f; do
-        local bname dest target
-        bname=$(basename "$f")
-        dest="$BIN_DIR/$bname"
-        if [[ -L "$f" ]]; then
-            target=$(readlink "$f")
-            [[ "$target" = /* ]] && target=$(basename "$target")
-            ln -sf "$target" "$dest" 2>/dev/null || true
-        else
-            install -m 0755 "$f" "$dest"
-        fi
-    done
-
-    # Preserve nvvm/ tree (contains libdevice.10.bc for XLA GPU code generation).
-    # XLA needs this at --xla_gpu_cuda_data_dir/nvvm/libdevice/libdevice.10.bc.
-    for nvvm_src in "$tmp"/usr/local/cuda-*/nvvm; do
-        [[ -d "$nvvm_src" ]] && cp -rn "$nvvm_src/." "$NVVM_DIR/"
-    done
-
-    rm -rf "$tmp"
 }
 
-# ── CUDA toolkit ──────────────────────────────────────────────────────────────
-# Package naming notes:
-#   cuda-cudart-12-9   → libcudart.so.12  (CUDA runtime)
-#   cuda-nvrtc-12-9    → libnvrtc.so.12 + libnvrtc-builtins.so.12.9  (bundled together)
-#   cuda-nvcc-12-9     → ptxas, nvlink  (PTX assembler — required by XLA kernel JIT)
-#   cuda-nvvm-12-9     → nvvm/libdevice/libdevice.10.bc  (device IR for GPU code gen)
-#   libcublas-12-9     → libcublas.so.12, libcublasLt.so.12
-#   libcufft-12-9      → libcufft.so.11
-#   libcusparse-12-9   → libcusparse.so.12
-#   libnvjitlink-12-9  → libnvJitLink.so.12
-for pkg in \
-    "cuda-cudart-${CUDA_PKG}" \
-    "cuda-nvrtc-${CUDA_PKG}" \
-    "cuda-nvcc-${CUDA_PKG}" \
-    "cuda-nvvm-${CUDA_PKG}" \
-    "libcublas-${CUDA_PKG}" \
-    "libcufft-${CUDA_PKG}" \
-    "libcusparse-${CUDA_PKG}" \
-    "libnvjitlink-${CUDA_PKG}"; do
-    install_deb "$pkg"
-done
+if ! complete; then
+    have=$(installed_version "$CUDA_DIR")
+    [[ -n "$have" && "$have" != "$CUDA_PKG" ]] && log "switching version: '$have' -> '$CUDA_PKG'"
 
-# libnccl2 appears many times (one per CUDA version). Use last = newest.
-install_deb "libnccl2" last
+    # Unpack on local disk: the .debs are large, and $SGO is NFS.
+    work_root="/goinfre/$USER"
+    [[ -d "$work_root" && -w "$work_root" ]] || work_root="${TMPDIR:-/tmp}"
+    WORK=$(mktemp -d "$work_root/cuda-bootstrap.XXXXXX")
+    trap 'rm -rf "$WORK"' EXIT
+    mkdir -p "$DEB_CACHE"
 
-# ── cuDNN 9 ───────────────────────────────────────────────────────────────────
-# libcudnn9-cuda-12    → libcudnn.so.9 + all static component .so files
-# libcudnn9-jit-cuda-12 → libcudnn_engines_runtime_compiled.so.9
-for pkg in "libcudnn9-cuda-12" "libcudnn9-jit-cuda-12"; do
-    install_deb "$pkg" last
-done
+    log "fetching NVIDIA package index"
+    curl -fsSL --retry 3 "$REPO_BASE/Packages.gz" | gunzip > "$WORK/Packages" \
+        || die "could not fetch the package index"
 
-# ── NVSHMEM stubs ─────────────────────────────────────────────────────────────
-# libxla_extension.so (XLA's precompiled CUDA binary) has hard NEEDED entries
-# for three NVSHMEM 3 libraries. NVSHMEM is only required for multi-node GPU
-# collective communication. For single-GPU workloads the symbols are never
-# resolved: stubs with the right SONAMEs satisfy the dynamic linker at startup.
-#
-# libnvshmem_host.so.3 requires 68 symbols tagged @NVSHMEM in the version table.
-# A plain empty-symbol stub causes "undefined symbol: nvshmem_malloc, version
-# NVSHMEM" at load time. We generate a C source + GNU version script inline.
-echo "[cuda-bootstrap] creating NVSHMEM stubs..."
+    install_begin "$CUDA_DIR" "$CUDA_PKG"
+    mkdir -p "$STAGE/lib" "$STAGE/bin" "$STAGE/nvvm"
 
-if [[ ! -f "$LIB_DIR/libnvshmem_host.so.3" ]]; then
-    _src=$(mktemp /tmp/nvshmem_host_XXXXXX.c)
-    _map=$(mktemp /tmp/nvshmem_map_XXXXXX)
+    # ── CUDA toolkit ──────────────────────────────────────────────────────────
+    #   cuda-cudart-12-9   → libcudart.so.12  (CUDA runtime)
+    #   cuda-nvrtc-12-9    → libnvrtc.so.12 + libnvrtc-builtins.so.12.9
+    #   cuda-nvcc-12-9     → ptxas, nvlink  (PTX assembler — XLA kernel JIT)
+    #   cuda-nvvm-12-9     → nvvm/libdevice/libdevice.10.bc  (device IR)
+    #   libcublas-12-9     → libcublas.so.12, libcublasLt.so.12
+    #   libcufft-12-9      → libcufft.so.11
+    #   libcusparse-12-9   → libcusparse.so.12
+    #   libnvjitlink-12-9  → libnvJitLink.so.12
+    for pkg in cuda-cudart cuda-nvrtc cuda-nvcc cuda-nvvm \
+               libcublas libcufft libcusparse libnvjitlink; do
+        install_deb "${pkg}-${CUDA_PKG}"
+    done
+    install_deb libnccl2 last
 
-    cat > "$_src" <<'NVSHMEM_C'
+    # ── cuDNN 9 ───────────────────────────────────────────────────────────────
+    #   libcudnn9-cuda-12     → libcudnn.so.9 + its component libraries
+    #   libcudnn9-jit-cuda-12 → libcudnn_engines_runtime_compiled.so.9
+    install_deb libcudnn9-cuda-12 last
+    install_deb libcudnn9-jit-cuda-12 last
+
+    # ── NVSHMEM stubs ─────────────────────────────────────────────────────────
+    # libxla_extension.so (XLA's precompiled CUDA binary) has hard NEEDED
+    # entries for three NVSHMEM 3 libraries. NVSHMEM is only used for
+    # multi-node GPU collectives; for single-GPU workloads the symbols are
+    # never resolved, so stubs with the right SONAMEs satisfy the dynamic
+    # linker at startup.
+    #
+    # libnvshmem_host.so.3 needs 68 symbols tagged @NVSHMEM in the version
+    # table; an empty stub fails with "undefined symbol: nvshmem_malloc,
+    # version NVSHMEM" at load time. Hence the C source + GNU version script.
+    command -v gcc >/dev/null 2>&1 || die "gcc not found — cannot create NVSHMEM stubs"
+    log "creating NVSHMEM stubs"
+    cat > "$WORK/nvshmem_host.c" <<'NVSHMEM_C'
 void nvshmem_fence(void) {}
 void nvshmem_free(void *p) {}
 void nvshmem_global_exit(int s) {}
@@ -271,8 +260,7 @@ void nvshmemx_uint8_min_reduce_on_stream(int t, void *d, const void *s, unsigned
 void nvshmemx_uint8_prod_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
 void nvshmemx_uint8_sum_reduce_on_stream(int t, void *d, const void *s, unsigned long n, void *st) {}
 NVSHMEM_C
-
-    cat > "$_map" <<'NVSHMEM_MAP'
+    cat > "$WORK/nvshmem.map" <<'NVSHMEM_MAP'
 NVSHMEM {
     global:
         nvshmem_fence; nvshmem_free; nvshmem_global_exit; nvshmem_malloc;
@@ -312,27 +300,46 @@ NVSHMEM {
     local: *;
 };
 NVSHMEM_MAP
-
     gcc -x c -shared -fPIC \
         -Wl,-soname,libnvshmem_host.so.3 \
-        -Wl,--version-script="$_map" \
-        -o "$LIB_DIR/libnvshmem_host.so.3" "$_src" \
-        || { echo "[cuda-bootstrap] gcc not found — cannot create NVSHMEM stubs" >&2; exit 1; }
-    rm -f "$_src" "$_map"
+        -Wl,--version-script="$WORK/nvshmem.map" \
+        -o "$STAGE/lib/libnvshmem_host.so.3" "$WORK/nvshmem_host.c"
+    # These two need only the SONAME.
+    for soname in nvshmem_bootstrap_uid.so.3 nvshmem_transport_ibrc.so.3; do
+        echo "void _stub(void) {}" \
+            | gcc -x c -shared -fPIC -Wl,-soname,"$soname" -o "$STAGE/lib/$soname" -
+    done
+
+    for f in "${REQUIRED[@]}"; do
+        [[ -e "$STAGE/$f" ]] || die "incomplete install, missing $f"
+    done
+    install_commit "$CUDA_DIR" "$CUDA_PKG"
+
+    # Drop cached .debs this version no longer uses (superseded nccl/cuDNN
+    # builds, another CUDA version): /sgoinfre's quota is tight.
+    for f in "$DEB_CACHE"/*; do
+        [[ -e "$f" ]] || continue
+        keep=0
+        for used in "${USED_DEBS[@]}"; do
+            [[ "$(basename "$f")" == "$used" ]] && { keep=1; break; }
+        done
+        (( keep )) || rm -f "$f"
+    done
+
+    log "done — CUDA ${CUDA_PKG/-/.} in $CUDA_DIR"
+    cat <<EOF
+
+To activate in the current shell (new login shells get it from ~/.profile):
+  export LD_LIBRARY_PATH="\${LD_LIBRARY_PATH:+\${LD_LIBRARY_PATH}:}$CUDA_DIR/lib"
+  export PATH="$CUDA_DIR/bin:\${PATH}"
+  export XLA_FLAGS="\${XLA_FLAGS:+\${XLA_FLAGS} }--xla_gpu_cuda_data_dir=$CUDA_DIR"
+
+To compile EXLA with GPU support (run once in your project):
+  XLA_TARGET=cuda12 mix deps.compile exla --force
+EOF
 fi
 
-# nvshmem_bootstrap_uid.so.3 and nvshmem_transport_ibrc.so.3 need only SONAME
-for soname in "nvshmem_bootstrap_uid.so.3" "nvshmem_transport_ibrc.so.3"; do
-    [[ -f "$LIB_DIR/$soname" ]] && continue
-    echo "void _stub(void) {}" \
-        | gcc -x c -shared -fPIC -Wl,-soname,"$soname" -o "$LIB_DIR/$soname" - \
-        || { echo "[cuda-bootstrap] gcc not found — cannot create NVSHMEM stubs" >&2; exit 1; }
-done
-
-# ── Write version marker ──────────────────────────────────────────────────────
-printf '%s' "$CUDA_PKG" > "$MARKER"
-
-# ── Wire LD_LIBRARY_PATH + PATH into ~/.profile ───────────────────────────────
+# ── Wire LD_LIBRARY_PATH + PATH into ~/.profile (once) ───────────────────────
 PROFILE_MARKER="# cuda-sgoinfre LD_LIBRARY_PATH"
 if [[ -f "$HOME/.profile" ]] && ! grep -q "$PROFILE_MARKER" "$HOME/.profile"; then
     cat >> "$HOME/.profile" <<PROFILE_SNIPPET
@@ -345,13 +352,3 @@ _cuda_dir="$CUDA_DIR"
 unset _cuda_dir
 PROFILE_SNIPPET
 fi
-
-echo "[cuda-bootstrap] done — CUDA ${CUDA_PKG/-/.} in $CUDA_DIR"
-echo ""
-echo "To activate in the current shell:"
-echo "  export LD_LIBRARY_PATH=\"\${LD_LIBRARY_PATH:+\${LD_LIBRARY_PATH}:}${LIB_DIR}\""
-echo "  export PATH=\"${BIN_DIR}:\${PATH}\""
-echo "  export XLA_FLAGS=\"\${XLA_FLAGS:+\${XLA_FLAGS} }--xla_gpu_cuda_data_dir=${CUDA_DIR}\""
-echo ""
-echo "To compile EXLA with GPU support (run once in your project):"
-echo "  XLA_TARGET=cuda12 mix deps.compile exla --force"
