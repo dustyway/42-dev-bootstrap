@@ -71,6 +71,26 @@ verify_sha256() {
     fi
 }
 
+# fetch_github_digest OWNER/REPO TAG ASSET DEST
+# For releases without a checksums file: write the sha256 that GitHub records
+# for ASSET (the API's `digest` field) to DEST as a sha256sum line, for
+# verify_sha256. Unauthenticated API calls are limited to 60 an hour, which is
+# plenty: this runs only when installing, and DEST is cached afterwards.
+fetch_github_digest() {
+    local repo="$1" tag="$2" asset="$3" dest="$4" json digest
+    [[ -s "$dest" ]] && return 0
+    json=$(curl -fsSL --retry 3 "https://api.github.com/repos/$repo/releases/tags/$tag") \
+        || die "GitHub API request failed for $repo $tag"
+    digest=$(python3 -I -c '
+import json, sys
+for a in json.load(sys.stdin).get("assets", []):
+    if a.get("name") == sys.argv[1]:
+        print(a.get("digest") or "")
+' "$asset" <<<"$json")
+    [[ "$digest" == sha256:* ]] || die "GitHub has no sha256 digest for $asset in $repo $tag"
+    printf '%s  %s\n' "${digest#sha256:}" "$asset" >"$dest"
+}
+
 # installed_version APP_HOME — the version recorded by install_tarball, or "".
 installed_version() {
     local marker="$1/.$BS_NAME-version"
@@ -87,19 +107,44 @@ needs_install() {
     return 0
 }
 
+# install_begin APP_HOME VERSION / install_commit APP_HOME VERSION
+# For layouts install_tarball can't handle: install_begin gives an empty
+# APP_HOME.tmp to fill, install_commit records VERSION and swaps it in for
+# APP_HOME. A failure in between leaves the old APP_HOME (if any) untouched
+# until the next run.
+install_begin() {
+    local app="$1" version="$2"
+    log "installing $version to $app"
+    rm -rf "$app.tmp"
+    mkdir -p "$app.tmp"
+}
+install_commit() {
+    local app="$1" version="$2"
+    printf '%s' "$version" >"$app.tmp/.$BS_NAME-version"
+    rm -rf "$app"
+    mv "$app.tmp" "$app"
+}
+
 # install_tarball TARBALL APP_HOME VERSION [TAR_ARGS...]
-# Extract TARBALL into APP_HOME (via APP_HOME.tmp, so a failed extract leaves
-# no half-installed tree) and record VERSION. TAR_ARGS go after the archive,
-# e.g. member names or --strip-components=1.
+# Extract TARBALL into APP_HOME via install_begin/install_commit and record
+# VERSION. TAR_ARGS go after the archive, e.g. member names or
+# --strip-components=1.
 install_tarball() {
     local tarball="$1" app="$2" version="$3"
     shift 3
-    log "installing $version to $app"
-    rm -rf "$app.tmp" "$app"
-    mkdir -p "$app.tmp"
+    install_begin "$app" "$version"
     tar -xf "$tarball" -C "$app.tmp" "$@" || { rm -rf "$app.tmp"; die "extracting $(basename "$tarball") failed"; }
-    printf '%s' "$version" >"$app.tmp/.$BS_NAME-version"
-    mv "$app.tmp" "$app"
+    install_commit "$app" "$version"
+}
+
+# link_launchers DIR
+# Symlink every executable file in DIR into ~/bin under its own name.
+link_launchers() {
+    local f
+    for f in "$1"/*; do
+        [[ -f "$f" && -x "$f" ]] && link_launcher "$f"
+    done
+    return 0
 }
 
 # link_launcher TARGET [NAME]

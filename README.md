@@ -111,11 +111,14 @@ pass `--load` or `--push`. Images pulled from a registry
 
 Installs `inotifywait` and `inotifywatch`, which Phoenix's `file_system`
 dependency uses for live reload. There is no mise plugin or upstream binary,
-so `build-inotify-tools.yml` builds a static tarball.
+so `build-inotify-tools.yml` builds a static tarball, published with a
+`.sha256` file that the bootstrap requires.
 
 ### `clangd-bootstrap`
 
-Installs `clangd` from the `clangd/clangd` releases. `~/bin/clangd` shadows
+Installs `clangd` from the `clangd/clangd` releases, verified against the
+sha256 digest GitHub records for the release file (upstream publishes no
+checksums file). `~/bin/clangd` shadows
 apt's clangd 14, which rejects newer `.clang-format` keys such as
 `InsertNewlineAtEOF`. Only `clangd` is included, but it has clang-format
 built in, so formatting through the editor (e.g. `eglot-format-buffer`)
@@ -422,13 +425,17 @@ machine shows that machine's last run.
 |---|---|
 | `fetch URL DEST` | Download to `DEST` unless it's already cached; goes through `DEST.part`, so an interrupted download is never reused |
 | `verify_sha256 FILE SUMS [NAME]` | Check `FILE` against its line in a `sha256sum`-style list; on a mismatch, delete both so the next run downloads them again |
+| `fetch_github_digest REPO TAG ASSET DEST` | For releases without a checksums file: write the sha256 GitHub records for `ASSET` to `DEST`, for `verify_sha256` |
 | `needs_install APP_HOME VERSION BIN` | True if `BIN` is missing or another version is installed |
 | `install_tarball TARBALL APP_HOME VERSION [TAR_ARGS…]` | Extract into `APP_HOME.tmp`, record the version, swap it in |
+| `install_begin` / `install_commit APP_HOME VERSION` | The same swap for layouts `install_tarball` can't handle: fill `APP_HOME.tmp` in between (see `clangd-bootstrap`) |
 | `link_launcher TARGET [NAME]` | Symlink `~/bin/NAME` to `TARGET` |
+| `link_launchers DIR` | Symlink every executable in `DIR` into `~/bin` |
 | `log`, `die` | Messages prefixed with the script name |
 
-`fzf-bootstrap`, `glow-bootstrap`, `act-bootstrap` and `actionlint-bootstrap`
-are short examples. The other scripts don't use the library yet.
+Converted so far: `fzf`, `glow`, `act`, `actionlint`, `gh`, `clangd`,
+`postgres` and `inotify-tools`. `fzf-bootstrap` is the shortest example. The
+other scripts don't use the library yet.
 
 To try a bootstrap without touching your real installs, point it at scratch
 directories:

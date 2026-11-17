@@ -3,74 +3,56 @@
 # the community clangd/clangd prebuilt releases. Safe to run every login
 # (idempotent).
 #
-# Pulls a prebuilt zip from https://github.com/clangd/clangd/releases and
-# extracts to /sgoinfre so it persists across /goinfre wipes. ~/bin/clangd is
-# a wrapper that adds --query-driver for mise-installed compilers (see the end
-# of this script); it shadows the apt /bin/clangd when ~/bin is first in PATH.
+# Ubuntu 22.04's apt pins clangd to clang-14, too old for recent
+# .clang-format keys (e.g. InsertNewlineAtEOF) and several LSP features
+# eglot uses. ~/bin/clangd is a wrapper that adds --query-driver for
+# mise-installed compilers (see the end of this script); it shadows the apt
+# /bin/clangd since ~/bin comes first on PATH.
 #
-# Why this exists: Ubuntu 22.04 (and even 24.04) apt pins clangd to clang-14,
-# which is too old for recent .clang-format keys (e.g. InsertNewlineAtEOF) and
-# predates several LSP features Emacs's eglot uses. No sudo, no system
-# packages; just download the upstream binary.
+# Upstream publishes no checksums file, so the zip is verified against the
+# sha256 digest GitHub records for each release asset.
 #
-# clang-format not included: the upstream zip ships clangd + bundled
-# resource headers, not a standalone clang-format CLI. Clangd has libFormat
-# compiled in, so Emacs's on-type and on-save formatting (eglot-format-buffer)
-# picks up ~/.clang-format correctly. If you need CLI clang-format, install
-# it separately (pipx install clang-format).
+# clang-format is not included: the zip ships clangd and its resource
+# headers only. clangd has libFormat built in, so editor formatting through
+# the LSP picks up ~/.clang-format. For the CLI, use conda:clang-format via
+# mise.
 #
 # Usage:  clangd-bootstrap [VERSION]
 #
-# ─── Placement (same reasoning as emacs-/postgres-bootstrap) ────────────────
+# ─── Placement ───────────────────────────────────────────────────────────────
 # App binary     → $SGO/clangd/<version>/           persistent on sgoinfre
 # Cached zip     → $SGO/.cache/clangd-linux-<v>…    ~110 MB, re-extract
 # Launcher       → ~/bin/clangd                     wrapper script, tiny
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
 
 VERSION="${1:-23.1.0}"
 ASSET="clangd-linux-${VERSION}.zip"
 URL="https://github.com/clangd/clangd/releases/download/${VERSION}/${ASSET}"
-
-SGO="$(ls -d /sgoinfre/goinfre/Perso/*"${USER}"* 2>/dev/null | head -n1)"
-[[ -z "$SGO" ]] && { echo "[clangd-bootstrap] sgoinfre path not found for $USER" >&2; exit 1; }
-
 APP_HOME="$SGO/clangd/${VERSION}"
-ZIPFILE="$SGO/.cache/${ASSET}"
-VERSION_MARKER="$APP_HOME/.clangd-bootstrap-version"
 
-mkdir -p "$(dirname "$ZIPFILE")" "$SGO/clangd"
-
-installed=""
-[[ -f "$VERSION_MARKER" ]] && installed=$(cat "$VERSION_MARKER")
-
-if [[ ! -x "$APP_HOME/bin/clangd" || "$installed" != "$VERSION" ]]; then
-    if [[ -n "$installed" && "$installed" != "$VERSION" ]]; then
-        echo "[clangd-bootstrap] switching version: '$installed' -> '$VERSION'"
-        rm -f "$ZIPFILE"
-    fi
+if needs_install "$APP_HOME" "$VERSION" bin/clangd; then
     # Drop other versions and their zips: sgoinfre's quota is tight.
+    mkdir -p "$SGO/clangd"
     find "$SGO/clangd" -mindepth 1 -maxdepth 1 ! -name "$VERSION" -exec rm -rf {} +
-    find "$SGO/.cache" -maxdepth 1 -name 'clangd-linux-*.zip' ! -name "$ASSET" -delete
-    if [[ ! -s "$ZIPFILE" ]]; then
-        echo "[clangd-bootstrap] downloading $ASSET"
-        curl -fL --retry 3 -o "$ZIPFILE" "$URL"
-    fi
-    echo "[clangd-bootstrap] installing clangd $VERSION to $APP_HOME"
-    rm -rf "$APP_HOME.tmp" "$APP_HOME"
-    mkdir -p "$APP_HOME.tmp"
-    # The zip contains a single top-level dir "clangd_<VERSION>/" — strip it
-    # so $APP_HOME/bin and $APP_HOME/lib sit at the root (matches the layout
-    # of sibling bootstraps). The ~/bin wrapper execs the real binary path,
-    # so clangd finds its bundled resource headers next to it.
-    unzip -q "$ZIPFILE" -d "$APP_HOME.tmp"
+    find "$CACHE" -maxdepth 1 -name 'clangd-linux-*' ! -name "$ASSET" ! -name "$ASSET.sha256" -delete
+
+    fetch "$URL" "$CACHE/$ASSET"
+    fetch_github_digest clangd/clangd "$VERSION" "$ASSET" "$CACHE/$ASSET.sha256"
+    verify_sha256 "$CACHE/$ASSET" "$CACHE/$ASSET.sha256"
+
+    install_begin "$APP_HOME" "$VERSION"
+    # The zip has a single top-level clangd_<VERSION>/; move its contents up
+    # so bin/ and lib/ sit at the root. clangd finds its resource headers
+    # relative to the real binary, which the wrapper execs directly.
+    unzip -q "$CACHE/$ASSET" -d "$APP_HOME.tmp"
     topdir="$APP_HOME.tmp/clangd_${VERSION}"
-    [[ -d "$topdir" ]] || { echo "[clangd-bootstrap] unexpected zip layout: no $topdir" >&2; exit 1; }
+    [[ -d "$topdir" ]] || die "unexpected zip layout: no clangd_${VERSION}/"
     mv "$topdir"/* "$APP_HOME.tmp/"
     rmdir "$topdir"
-    mv "$APP_HOME.tmp" "$APP_HOME"
-    printf '%s' "$VERSION" > "$VERSION_MARKER"
+    install_commit "$APP_HOME" "$VERSION"
 fi
 
 # Wrapper instead of a symlink, to pass --query-driver. Compilers from mise
@@ -82,8 +64,8 @@ fi
 MISE_DATA="${MISE_DATA_DIR:-$SGO/mise-data}"
 mkdir -p "$HOME/bin"
 rm -f "$HOME/bin/clangd"
-cat > "$HOME/bin/clangd" <<EOF
+cat > "$HOME/bin/clangd" <<WRAPPER
 #!/bin/sh
 exec "$APP_HOME/bin/clangd" --query-driver="$MISE_DATA/**" "\$@"
-EOF
+WRAPPER
 chmod +x "$HOME/bin/clangd"

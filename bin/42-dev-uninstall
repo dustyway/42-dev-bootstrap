@@ -59,7 +59,7 @@ UNINSTALL_COMPONENTS=()
 cleanup_globs_for() {
     case "$1" in
         emacs)          printf '%s' "$SGO/emacs:$SGO/.cache/emacs-*.tar.gz:$SGO/.cache/emacs-*.tar.gz.sha256" ;;
-        clangd)         printf '%s' "$SGO/clangd:$SGO/.cache/clangd-linux-*.zip" ;;
+        clangd)         printf '%s' "$SGO/clangd:$SGO/.cache/clangd-linux-*.zip:$SGO/.cache/clangd-linux-*.zip.sha256" ;;
         wx)             printf '%s' "$SGO/wx:$SGO/.cache/wx-*.tar.gz:$SGO/.cache/wx-*.tar.gz.sha256" ;;
         tailscale)      printf '%s' "$SGO/tailscale:$SGO/.cache/tailscale_*.tgz" ;;
         torsocks)       printf '%s' "$SGO/torsocks:$SGO/.cache/torsocks_*.deb:$HOME/bin/torsocks" ;;
