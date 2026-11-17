@@ -20,12 +20,15 @@
 
 set -euo pipefail
 
-# stdout is reserved for the install path: everything else, including log
-# lines and any tool output, goes to stderr; fd 3 keeps the real stdout.
-exec 3>&1 1>&2
-
 # shellcheck source=../lib/bootstrap.bash
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
+
+# stdout is reserved for the install path: everything else, including log
+# lines and any tool output, goes to stderr; fd 3 keeps the real stdout.
+# This must come after the source: the library re-executes the script under
+# its lock, and a redirect made before that would send the re-executed
+# script's fd 3 to stderr too.
+exec 3>&1 1>&2
 
 VERSION="${1:-3.2.6}"
 REPO="${WX_BOOTSTRAP_REPO:-dustyway/42-dev-bootstrap}"

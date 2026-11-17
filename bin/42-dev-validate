@@ -9,11 +9,17 @@ fail=0
 ok() { printf '[ok] %s\n' "$*"; }
 bad() { printf '[fail] %s\n' "$*" >&2; fail=1; }
 
+# One file per `bash -n`: given several, it parses only the first and treats
+# the rest as arguments.
 check_bash_syntax() {
-    if bash -n "$ROOT/install.sh" "$ROOT"/lib/*.bash "$ROOT"/bin/*; then
+    local f bad_files=()
+    for f in "$ROOT/install.sh" "$ROOT"/lib/*.bash "$ROOT"/bin/*; do
+        bash -n "$f" || bad_files+=("${f#"$ROOT"/}")
+    done
+    if (( ${#bad_files[@]} == 0 )); then
         ok "bash syntax"
     else
-        bad "bash syntax"
+        bad "bash syntax: ${bad_files[*]}"
     fi
 }
 

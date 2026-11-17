@@ -53,7 +53,8 @@ _bs_lock_key=$(printf '%s' "$BS_NAME $*" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-12
 if [[ "${_BS_LOCKED:-}" != "$_bs_lock_key" ]]; then
     mkdir -p "$CACHE/.locks"
     _bs_lock="$CACHE/.locks/$_bs_lock_key"
-    flock -n "$_bs_lock" true || log "another run is in progress; waiting for it"
+    # To stderr: wx-bootstrap's stdout carries only its install path.
+    flock -n "$_bs_lock" true || log "another run is in progress; waiting for it" >&2
     _BS_LOCKED="$_bs_lock_key" exec flock -o -w "${BOOTSTRAP_LOCK_TIMEOUT:-7200}" \
         "$_bs_lock" "$0" "$@"
 fi

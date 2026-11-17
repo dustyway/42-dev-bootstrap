@@ -95,15 +95,21 @@ manifest_entries() {
     done <"$MANIFEST"
 }
 
+# end_line FILE — add a newline to FILE if it's non-empty and lacks a final
+# one, so the next appended line starts on a line of its own.
+end_line() {
+    if [[ -s "$1" && -n "$(tail -c1 "$1")" ]]; then
+        printf '\n' >>"$1"
+    fi
+}
+
 ensure_hook() {
     seed_manifest
     local f="$HOME/.zprofile"
     if [[ -f "$f" ]] && grep -Eq '^[[:space:]]*[^#[:space:]].*Apps/bin/42-dev-heal' "$f"; then
         return 0
     fi
-    if [[ -s "$f" ]] && [[ "$(tail -c1 "$f" | od -An -c | tr -d ' ')" != '\n' ]]; then
-        printf '\n' >>"$f"
-    fi
+    end_line "$f"
     printf '%s\n' "$HOOK_LINE" >>"$f"
     say "added login hook to $f"
 }
@@ -391,6 +397,7 @@ migrate() {
     fi
 
     seed_manifest
+    end_line "$MANIFEST"
     local existing; existing=$'\n'$(manifest_entries)$'\n'
     for rec in "${recs[@]}"; do
         IFS=$'\t' read -r f l cmd <<<"$rec"

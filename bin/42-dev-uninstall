@@ -336,7 +336,7 @@ list_all() {
 
 # Args: name, assume_yes (0|1), uninstall (0|1)
 remove_one() {
-    local name="$1" yes="$2" uninstall="$3"
+    local name="$1" yes="$2" uninstall="$3" rec f l t ans
     if ! parse_row "$name"; then
         echo "[42-dev-uninstall] unknown component: $name" >&2
         echo "          run '42-dev-uninstall' for the list" >&2
@@ -348,7 +348,18 @@ remove_one() {
         # Still offer init-line cleanup if asked.
         if (( uninstall )) && [[ -n "$C_PATTERN" ]]; then
             mapfile -t init_recs < <(find_init_lines "$C_PATTERN")
-            (( ${#init_recs[@]} > 0 )) && comment_out_init_lines "${init_recs[@]}"
+            if (( ${#init_recs[@]} > 0 )); then
+                echo "Init lines to comment out (--uninstall):"
+                for rec in "${init_recs[@]}"; do
+                    IFS=$'\t' read -r f l t <<<"$rec"
+                    printf "  %s:%s  %s\n" "$f" "$l" "$t"
+                done
+                if (( ! yes )); then
+                    read -r -p "Proceed? [y/N] " ans
+                    [[ "$ans" =~ ^[Yy]$ ]] || { echo "[42-dev-uninstall] aborted"; return 1; }
+                fi
+                comment_out_init_lines "${init_recs[@]}"
+            fi
             post_uninstall_component "$name"
         fi
         return 0
@@ -405,7 +416,10 @@ remove_one() {
     if (( uninstall )) && (( ${#init_recs[@]} > 0 )); then
         comment_out_init_lines "${init_recs[@]}"
     fi
-    (( uninstall )) && post_uninstall_component "$name"
+    if (( uninstall )); then
+        post_uninstall_component "$name"
+    fi
+    return 0
 }
 
 remove_all_safe() {
