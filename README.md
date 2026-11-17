@@ -172,29 +172,6 @@ works.
 the system GCC 12 ones (where `<print>` doesn't exist). Old versions are
 removed when the version changes.
 
-### `gh-bootstrap`
-
-Installs the GitHub CLI from the `cli/cli` releases. apt's `gh` lags behind
-and needs sudo. Auth tokens live in `~/.config/gh/` and survive `/sgoinfre`
-wipes.
-
-### `fzf-bootstrap [VERSION]`
-
-Installs the [fzf](https://github.com/junegunn/fzf) fuzzy finder from the
-upstream releases, verified against the release checksums, and links
-`~/bin/fzf`.
-
-### `actionlint-bootstrap [VERSION]`
-
-Installs [actionlint](https://github.com/rhysd/actionlint), a linter for
-GitHub Actions workflows, from the upstream releases. It isn't in apt.
-
-### `act-bootstrap [VERSION]`
-
-Installs [act](https://github.com/nektos/act), which runs GitHub Actions
-workflows locally, from the upstream releases. Jobs run in containers on
-the cluster's rootless Docker (see `docker-bootstrap`).
-
 ### `cuda-bootstrap [CUDA_PKG_SUFFIX]`
 
 Installs CUDA 12, cuDNN 9 and NCCL 2 libraries without sudo, for GPU
@@ -216,11 +193,6 @@ your project:
 ```sh
 XLA_TARGET=cuda12 mix deps.compile exla --force
 ```
-
-### `glow-bootstrap [VERSION]`
-
-Installs [glow](https://github.com/charmbracelet/glow), a terminal Markdown
-viewer, from the upstream releases. It isn't in Ubuntu 22.04's apt.
 
 ### `ocaml-bootstrap [RELEASE]`
 
@@ -415,7 +387,7 @@ size, and whether it reinstalls on login. Enter on a row offers:
   back after a wipe.
 
 `42-dev-install --list` prints the same table without the picker. fzf comes
-from `fzf-bootstrap`.
+from mise (see [mise runtimes](#mise-runtimes)).
 
 ### `42-dev-uninstall`
 
@@ -510,7 +482,7 @@ install done, instead of extracting into the same `APP_HOME.tmp`. Daemons a
 bootstrap starts don't inherit the lock. A run gives up after
 `BOOTSTRAP_LOCK_TIMEOUT` seconds (default 7200).
 
-`fzf-bootstrap` is the shortest example, `ghidra-bootstrap` the fullest (two
+`inotify-tools-bootstrap` is the shortest example, `ghidra-bootstrap` the fullest (two
 installs, a wrapper and a desktop entry). `install.sh` copies everything in
 `bin/` and `lib/`, so a new script needs no other registration; add a
 registry row in `lib/components.bash` if `42-dev-install` should offer it.
@@ -519,7 +491,7 @@ To try a bootstrap without touching your real installs, point it at scratch
 directories:
 
 ```sh
-BOOTSTRAP_SGO=/goinfre/$USER/sgo-test HOME=/goinfre/$USER/home-test bin/fzf-bootstrap
+BOOTSTRAP_SGO=/goinfre/$USER/sgo-test HOME=/goinfre/$USER/home-test bin/inotify-tools-bootstrap
 ```
 
 `42-dev-install` and `42-dev-uninstall` honour `BOOTSTRAP_SGO` too. A script
@@ -529,7 +501,7 @@ library, fails on one that still does its own lookup, and lists any other
 script that does:
 
 ```
-[ok] lib/bootstrap.bash: 21 of 24 bootstraps
+[ok] lib/bootstrap.bash: 16 of 19 bootstraps
 ```
 
 The three others don't look up `/sgoinfre`: `docker` and `repo` work on
@@ -581,6 +553,24 @@ For a message instead of a bare trap, add
 Extras are only set up for tools in the config. Global npm packages go in
 `~/Apps/etc/npm-globals.txt`, one per line.
 
+Single-binary CLI tools that publish GitHub releases need no bootstrap of
+their own: mise's registry installs them through the `aqua:` backend, which
+verifies each download's checksum, and for some tools a cosign signature or
+GitHub's build attestation as well. These replaced the earlier
+`gh`/`fzf`/`glow`/`act`/`actionlint` bootstraps:
+
+```toml
+gh = "2.91.0"           # newer than apt's
+fzf = "0.65.2"          # also the picker in 42-dev-install/-uninstall
+glow = "3.0.0"          # terminal Markdown viewer
+act = "0.2.88"          # runs GitHub Actions locally, on rootless Docker
+actionlint = "1.7.7"    # GitHub Actions workflow linter
+```
+
+GUI apps see these too: `shell/profile.snippet` puts mise's shims on `PATH`.
+`mise latest <tool>` shows the newest version; `mise use -g <tool>@<version>`
+moves the pin.
+
 ## What survives a wipe
 
 "Reinstalled" means: re-extracted from the cached archive if it's still
@@ -593,10 +583,10 @@ there, otherwise downloaded again.
 | IDE plugins | yes | Fetched again from GitHub releases |
 | IDE settings (options/, keymaps/, codestyles/, …) | yes | Restored from the backup in $HOME |
 | Project-specific IDE state (workspace/, history, recents) | no | Not backed up; rebuilt when you reopen the project |
-| mise runtimes, OpenCode | yes | `mise install` from config.toml |
+| mise runtimes and tools (gh, fzf, glow, act, actionlint), OpenCode | yes | `mise install` from config.toml |
 | Global npm packages | yes | Reinstalled from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | not affected | Live in $HOME |
-| Emacs, PostgreSQL, inotify-tools, clangd, gh, glow, fzf, act, actionlint, OCaml, Ghidra + JDK, Tailscale, Tor Browser | yes | Reinstalled |
+| Emacs, PostgreSQL, inotify-tools, clangd, OCaml, Ghidra + JDK, Tailscale, Tor Browser | yes | Reinstalled |
 | graphviz, torsocks | yes | Reinstalled from cached .debs or `apt-get download` |
 | CUDA libraries | yes | Re-extracted from cached .debs, else downloaded from NVIDIA's repository |
 | ollama models | yes | Missing models from ollama-models.txt pulled again |

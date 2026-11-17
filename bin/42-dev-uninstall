@@ -23,7 +23,7 @@
 #   42-dev-uninstall --all-safe [-y]            bulk: every "safe" component, files only
 #   42-dev-uninstall --all-safe --uninstall     bulk uninstall
 #
-# Requires fzf for the TUI — run `fzf-bootstrap` once if it's missing.
+# Requires fzf for the TUI — install it with mise: `mise use -g fzf`.
 #
 # Components are classified "safe" (the matching bootstrap will reinstall on
 # next login) or "DATA" (user data, no bootstrap restores it).
@@ -66,12 +66,8 @@ cleanup_globs_for() {
         tailscale)      printf '%s' "$SGO/tailscale:$SGO/.cache/tailscale_*.tgz:$SGO/.cache/tailscale_*.tgz.sha256" ;;
         torsocks)       printf '%s' "$SGO/torsocks:$SGO/.cache/torsocks_*.deb:$HOME/bin/torsocks" ;;
         tor-browser)    printf '%s' "$SGO/tor-browser:$SGO/.cache/tor-browser-linux-x86_64-*.tar.xz*:$HOME/bin/tor-browser:$HOME/.local/share/applications/tor-browser.desktop" ;;
-        gh)             printf '%s' "$SGO/gh:$SGO/.cache/gh_*.tar.gz:$SGO/.cache/gh_*_checksums.txt" ;;
         ghidra)         printf '%s' "$SGO/ghidra:$SGO/.cache/ghidra_*.zip:$SGO/.cache/ghidra_*.zip.sha256:$SGO/.cache/OpenJDK21U-jdk_*:$HOME/bin/ghidra:$HOME/bin/ghidra-headless:$HOME/.local/share/applications/ghidra.desktop" ;;
         postgres)       printf '%s' "$SGO/postgres:$SGO/.cache/postgresql-*.tar.gz:$SGO/.cache/postgresql-*.tar.gz.sha256" ;;
-        act)            printf '%s' "$SGO/act:$SGO/.cache/act_*.tar.gz:$SGO/.cache/act_*_checksums.txt" ;;
-        glow)           printf '%s' "$SGO/glow:$SGO/.cache/glow_*.tar.gz:$SGO/.cache/glow_*_checksums.txt:$HOME/bin/glow" ;;
-        actionlint)     printf '%s' "$SGO/actionlint:$SGO/.cache/actionlint_*.tar.gz:$SGO/.cache/actionlint_*_checksums.txt" ;;
         graphviz)       printf '%s' "$SGO/graphviz:$SGO/.cache/graphviz-*" ;;
         cuda)           printf '%s' "$SGO/cuda:$SGO/cuda.tmp:$SGO/.cache/cuda-debs" ;;
         ocaml)          printf '%s' "$SGO/ocaml:$SGO/.cache/ocaml-*-linux-x86_64.tar.gz*" ;;
@@ -179,6 +175,23 @@ format_bytes() {
 # Transitive shim detection: any symlink resolving inside a doomed path, or
 # any regular file whose body grep-matches a doomed path. Newly found shims
 # get added to the doomed set so files referencing them are pulled in next.
+# mentions_path FILE PATH: FILE (a wrapper script or .desktop entry) refers
+# to PATH or something under it. PATH must end there: followed by /, a quote,
+# whitespace, : or ; or the line's end. A plain substring match made $SGO/gh
+# claim the launchers of $SGO/ghidra.
+mentions_path() {
+    awk -v p="$2" '
+        {
+            line = $0
+            while ((i = index(line, p)) > 0) {
+                c = substr(line, i + length(p), 1)
+                if (c == "" || c ~ /[\/"'"'"'[:space:]:;]/) { found = 1; exit }
+                line = substr(line, i + 1)
+            }
+        }
+        END { exit !found }' "$1" 2>/dev/null
+}
+
 detect_shims() {
     local doomed=("$@") p real
     # Symlinks are compared after readlink -f, so add each doomed path's
@@ -211,7 +224,7 @@ detect_shims() {
                 done
             elif [[ -f "$c" ]]; then
                 for p in "${doomed[@]}"; do
-                    grep -qF -- "$p" "$c" 2>/dev/null && { hit=1; break; }
+                    mentions_path "$c" "$p" && { hit=1; break; }
                 done
             fi
             if (( hit )); then
@@ -544,7 +557,7 @@ apply_interactive() {
 tui_mode() {
     if ! command -v fzf >/dev/null 2>&1; then
         echo "[42-dev-uninstall] fzf not found on PATH" >&2
-        echo "          install it with: fzf-bootstrap" >&2
+        echo "          install it with: mise use -g fzf" >&2
         exit 1
     fi
     local self; self="$(realpath "$0")"

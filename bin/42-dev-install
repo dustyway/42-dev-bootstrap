@@ -19,7 +19,7 @@
 #   42-dev-install --rows               (internal) emit row data for fzf reload
 #   42-dev-install --preview-of <name>  (internal) preview pane content
 #
-# Requires fzf for the TUI — run `fzf-bootstrap` once if it's missing.
+# Requires fzf for the TUI — install it with mise: `mise use -g fzf`.
 
 set -euo pipefail
 
@@ -205,7 +205,7 @@ install_interactive() {
 tui_mode() {
     if ! command -v fzf >/dev/null 2>&1; then
         echo "[42-dev-install] fzf not found on PATH" >&2
-        echo "        install it with: fzf-bootstrap" >&2
+        echo "        install it with: mise use -g fzf" >&2
         exit 1
     fi
     local self; self="$(realpath "$0")"
