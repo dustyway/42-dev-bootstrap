@@ -573,6 +573,8 @@ fzf = "0.65.2"          # also the picker in 42-dev-install/-uninstall
 glow = "3.0.0"          # terminal Markdown viewer
 act = "0.2.88"          # runs GitHub Actions locally, on rootless Docker
 actionlint = "1.7.7"    # GitHub Actions workflow linter
+"aqua:jgm/pandoc" = "3.14"  # document converter; spelled out because
+                            # the registry's default is the github: backend
 ```
 
 GUI apps see these too: `shell/profile.snippet` puts mise's shims on `PATH`.
@@ -591,7 +593,7 @@ there, otherwise downloaded again.
 | IDE plugins | yes | Fetched again from GitHub releases |
 | IDE settings (options/, keymaps/, codestyles/, …) | yes | Restored from the backup in $HOME |
 | Project-specific IDE state (workspace/, history, recents) | no | Not backed up; rebuilt when you reopen the project |
-| mise runtimes and tools (gh, fzf, glow, act, actionlint), OpenCode | yes | `mise install` from config.toml |
+| mise runtimes and tools (gh, fzf, glow, act, actionlint, pandoc), OpenCode | yes | `mise install` from config.toml |
 | Global npm packages | yes | Reinstalled from npm-globals.txt |
 | Go tools (`~/go/bin/*`) | not affected | Live in $HOME |
 | Emacs, PostgreSQL, inotify-tools, clangd, OCaml, Ghidra + JDK, Tailscale, Tor Browser | yes | Reinstalled |
