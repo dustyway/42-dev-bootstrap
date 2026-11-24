@@ -65,7 +65,9 @@ Installs a JetBrains IDE.
   The launcher passes the IDE a properties file kept outside the install
   (`<ENV>_PROPERTIES`, e.g. `WEBIDE_PROPERTIES`), so an in-place IDE update
   that resets `bin/idea.properties` can't send it back to the default
-  `~/.config` and `~/.local/share` paths in `$HOME`.
+  `~/.config` and `~/.local/share` paths in `$HOME`. `bin/idea.properties`
+  itself stays the stock file: the IDE needs its defaults (CLion 2026.3 hangs
+  at the splash screen without them).
 - Installs plugins from GitHub releases, since the marketplace often lags.
 - `<CODE>@VERSION` pins an IDE release; `owner/repo@tag` pins a plugin.
   Without a pin, the IDE is the latest release at first install and then

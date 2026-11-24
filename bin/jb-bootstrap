@@ -153,23 +153,19 @@ print(r["version"], d["link"], d["checksumLink"])
 fi
 
 # 3. Redirect the IDE's four runtime dirs away from $HOME (which would blow
-#    the quota once indexes build up), via an idea.properties file. Written
-#    every run, in two places:
-#    - $APP_CONFIG/idea.properties, which the ~/bin launcher (step 4) passes
-#      to the IDE. It's outside the install, because an in-place IDE update
-#      can replace bin/idea.properties with the stock one; the IDE then ran on
-#      the default ~/.config and ~/.local/share paths until the next login.
-#    - bin/idea.properties, for launches that bypass ~/bin (all JetBrains
-#      IDEs read it under this name; it's a legacy name, not IDEA-specific).
+#    the quota once indexes build up), via $APP_CONFIG/idea.properties,
+#    written every run. The ~/bin launcher (step 4) passes it to the IDE,
+#    which reads it on top of its own bin/idea.properties. bin/idea.properties
+#    stays the stock file: it holds defaults the IDE needs (CLion 2026.3 hangs
+#    at the splash screen without idea.fatal.error.notification), and an
+#    in-place update replaces it anyway.
 PROPS="$APP_CONFIG/idea.properties"
-for f in "$PROPS" "$APP_HOME/bin/idea.properties"; do
-    cat > "$f" <<EOF
+cat > "$PROPS" <<EOF
 idea.config.path=$APP_CONFIG/config
 idea.plugins.path=$APP_CONFIG/plugins
 idea.system.path=$GO/system
 idea.log.path=$GO/logs
 EOF
-done
 
 # 4. Launcher under the slug name. The IDE's launcher reads a properties file
 #    named by <envVarBaseName>_PROPERTIES (WEBIDE_PROPERTIES for WebStorm,
@@ -187,7 +183,11 @@ export ${env_base}_PROPERTIES="$PROPS"
 exec "$APP_HOME/bin/$LAUNCHER" "\$@"
 EOF
 else
-    log "no envVarBaseName in product-info.json; linking the launcher, which reads only bin/idea.properties" >&2
+    # This launcher reads only bin/idea.properties: add the paths to the stock
+    # file, once, instead of replacing it.
+    log "no envVarBaseName in product-info.json; adding the paths to bin/idea.properties" >&2
+    grep -qx "idea.config.path=$APP_CONFIG/config" "$APP_HOME/bin/idea.properties" 2>/dev/null \
+        || cat "$PROPS" >> "$APP_HOME/bin/idea.properties"
     link_launcher "$APP_HOME/bin/$LAUNCHER" "$SLUG"
 fi
 
