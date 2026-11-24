@@ -531,27 +531,47 @@ elixir = "1.20.1-otp-29" # hex / rebar / phx_new archives, livebook, IEx GTK fil
 erlang = "29.0.2"        # wx 3.2 build, Erlang compiled from source, LD_LIBRARY_PATH
 ```
 
-Current C/C++ compilers and tools come from conda-forge through mise's
-`conda:` backend. The cluster's newest is g++-12, whose standard library lacks
-most of C++23. Programs built with these compilers find the newer
-`libstdc++` through an rpath, without `LD_LIBRARY_PATH`:
+The C/C++ build tools come from mise:
 
 ```toml
-"conda:gxx" = "16.2.0"            # g++ / c++
-"conda:clangxx" = "23.1.5"        # clang++, uses GCC 16's libstdc++
-"conda:clang-format" = "23.1.5"
 "pipx:clang-tidy" = "23.1.4"      # see "Open" below
-"conda:libcxx-devel" = "23.1.5"   # libc++ for clang++-libcxx
 cmake = "4.5.0"                   # the cluster's is 3.22
 ninja = "1.13.2"                  # not on the cluster
+pixi = "0.84.2"                   # for the compilers, below
 ```
 
-Only `g++`/`c++` and `clang++` change; `gcc`/`cc` and `clang` stay the system
-versions. CMake finds the compiler as `c++` on `PATH`, so a build configured
-from a shell with mise active uses GCC 16. An IDE that doesn't run with mise's
-`PATH` (CLion as a flatpak) falls back to `/usr/bin/c++`, the system's
-clang 12, which can't build C++23; point its toolchain at the binaries from
-`mise which g++`, `mise which cmake` and `mise which ninja`. Set
+## Compilers (pixi)
+
+The cluster's newest compiler is g++-12, whose standard library lacks most of
+C++23. Current compilers come from conda-forge through one global
+[pixi](https://pixi.sh) environment, `cxx`, which `pixi-bootstrap` restores
+after a wipe. Its manifest is `~/Apps/etc/pixi/manifests/pixi-global.toml`
+(`$PIXI_HOME/manifests` links to it, so it survives a wipe):
+
+```toml
+[envs.cxx]
+channels = ["conda-forge"]
+dependencies = { gxx = "16.2.0.*", gcc = "16.2.0.*", clangxx = "23.1.5.*", clang = "23.1.5.*", clang-format = "23.1.5.*", libcxx-devel = "23.1.5.*" }
+exposed = { gcc = "gcc", cc = "gcc", "g++" = "g++", "c++" = "g++", clang = "clang", "clang++" = "clang++", clang-format = "clang-format" }
+```
+
+Change it with `pixi global install`/`remove` (with `PIXI_HOME` from
+`shell/*.snippet`), not by hand. Why pixi and not mise's `conda:` backend:
+pixi hardlinks every environment's files from one package cache on the same
+file system, where mise copies each tool's dependencies into a prefix of its
+own (g++ and clang shared 1.7 GB in one environment, 2.3 GB as two mise
+tools), and mise only exposes a package's own binaries, so `gcc`, `cc` and
+`clang` stayed the system ones. Programs built with these compilers find the
+newer `libstdc++` through an rpath, without `LD_LIBRARY_PATH`.
+
+`$PIXI_HOME/bin` comes first in `PATH`, so `cc` is GCC 16 too. 42 projects are
+evaluated with the cluster's `cc` (clang 12): compile once with `/usr/bin/cc`
+before submitting.
+
+CMake finds the compiler as `c++` on `PATH`. A JetBrains IDE installed with
+`jb-bootstrap` reads the login shell's environment and finds the same
+compilers. The cluster's CLion flatpak doesn't, and falls back to
+`/usr/bin/c++`, the system's clang 12, which can't build C++23. Set
 `CMAKE_GENERATOR=Ninja` (or pass `-G Ninja`) to use Ninja from the command
 line. Use `clangd-bootstrap` for clangd, not conda's `clang-tools`: its
 clangd and clang-tidy can't find clang's built-in headers and would shadow the
@@ -605,6 +625,7 @@ there, otherwise downloaded again.
 | Project-specific IDE state (workspace/, history, recents) | no | Not backed up; rebuilt when you reopen the project |
 | mise runtimes and tools (gh, fzf, glow, act, actionlint, pandoc), OpenCode | yes | `mise install` from config.toml |
 | Global npm packages | yes | Reinstalled from npm-globals.txt |
+| Compilers (pixi environments) | yes | `pixi global sync` from the manifest in $HOME |
 | Go tools (`~/go/bin/*`) | not affected | Live in $HOME |
 | Emacs, PostgreSQL, inotify-tools, clangd, OCaml, Ghidra + JDK, Tailscale, Tor Browser | yes | Reinstalled |
 | graphviz, torsocks | yes | Reinstalled from cached .debs or `apt-get download` |
@@ -618,7 +639,7 @@ there, otherwise downloaded again.
 
 ## Open
 
-- MemorySanitizer: conda's clang ships the MSan runtime, but MSan also needs
+- MemorySanitizer: conda-forge's clang ships the MSan runtime, but MSan also needs
   a libc++ built with `-fsanitize=memory`, which nobody ships. Plan: build
   libc++/libc++abi 23.1.5 with MSan in CI and add a `clang++-msan` launcher
   next to `clang++-libcxx`.
@@ -629,8 +650,6 @@ there, otherwise downloaded again.
   clangd's built-in clang-tidy in the editor.
 - `42-dev-uninstall` leaves a JetBrains IDE's `$SGO/jetbrains-config/<ide>`
   and `/goinfre/$USER/jetbrains/<ide>` behind.
-- mise exposes conda clangxx's `x86_64-conda-linux-gnu-clang++.cfg` as a
-  command on `PATH`. Harmless, but noise.
 
 ## Possible additions
 

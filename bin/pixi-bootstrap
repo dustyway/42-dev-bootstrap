@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# pixi-bootstrap — restore the pixi global environments (the C/C++ compilers)
+# on 42 cluster machines. Safe to run every login (idempotent).
+#
+# pixi installs conda-forge packages, like mise's conda backend. Its global
+# environments hardlink files from one package cache, where the conda backend
+# copies each tool's dependencies into a prefix of its own: g++ and clang in
+# one environment take 1.7 GB, in two mise prefixes 2.3 GB. pixi also exposes
+# any binary of an environment (cc, gcc, clang), not only the package's own.
+# pixi itself comes from mise (`pixi` in ~/.config/mise/config.toml).
+#
+# Usage:  pixi-bootstrap
+# Add or change tools with `pixi global install`/`remove`; they edit the
+# manifest below, so this script restores them after a wipe.
+#
+# ─── Placement ───────────────────────────────────────────────────────────────
+# Manifest      → ~/Apps/etc/pixi/manifests/pixi-global.toml   tiny, persistent;
+#                 $PIXI_HOME/manifests links to it
+# Environments  → $SGO/pixi/envs     persistent on sgoinfre
+# Package cache → $SGO/pixi/cache    same file system, so hardlinks work
+# Launchers     → $SGO/pixi/bin      on PATH via shell/*.snippet
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+# shellcheck source=../lib/bootstrap.bash
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bootstrap.bash"
+
+export PIXI_HOME="$SGO/pixi"
+export PIXI_CACHE_DIR="$PIXI_HOME/cache"
+MANIFESTS="$HOME/Apps/etc/pixi/manifests"
+
+# pixi comes from mise. 42-dev-heal runs entries in parallel, so after a wipe
+# mise-bootstrap may not have restored it yet: install it here too.
+export MISE_DATA_DIR="$SGO/mise-data"
+export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
+command -v mise >/dev/null 2>&1 || die "mise not on PATH — install mise first"
+mise install pixi >/dev/null || die "could not install pixi (is it in ~/.config/mise/config.toml?)"
+PIXI=$(mise which pixi) || die "mise has no pixi"
+
+# The manifest lives in $HOME so a sgoinfre wipe can't take it. On the first
+# run, move one that pixi created on sgoinfre; a manifest already in $HOME wins.
+mkdir -p "$PIXI_HOME" "$MANIFESTS"
+link="$PIXI_HOME/manifests"
+if [[ -d "$link" && ! -L "$link" ]]; then
+    for f in "$link"/* "$link"/.[!.]*; do
+        [[ -e "$f" ]] || continue
+        if [[ -e "$MANIFESTS/${f##*/}" ]]; then
+            die "$f and $MANIFESTS/${f##*/} both exist; merge them by hand"
+        fi
+        log "moving ${f##*/} to $MANIFESTS"
+        mv "$f" "$MANIFESTS/"
+    done
+    rmdir "$link"
+fi
+ln -sfn "$MANIFESTS" "$link"
+
+if [[ ! -s "$MANIFESTS/pixi-global.toml" ]]; then
+    log "no environments in $MANIFESTS/pixi-global.toml yet; add one with pixi global install"
+    exit 0
+fi
+
+# Installs missing environments and launchers; a no-op when all are in place.
+"$PIXI" global sync

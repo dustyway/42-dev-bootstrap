@@ -11,6 +11,10 @@ export MISE_CACHE_DIR="/goinfre/${USER}/mise-cache"
 # RUSTUP_HOME/CARGO_HOME from these so cargo/rustup see the same dirs.
 export MISE_RUSTUP_HOME="/sgoinfre/goinfre/Perso/${USER}/rustup"
 export MISE_CARGO_HOME="/sgoinfre/goinfre/Perso/${USER}/cargo"
+# Compilers from the pixi global environment cxx (see profile.snippet).
+export PIXI_HOME="/sgoinfre/goinfre/Perso/${USER}/pixi"
+export PIXI_CACHE_DIR="$PIXI_HOME/cache"
+export PATH="$PIXI_HOME/bin:$PATH"
 eval "$(mise activate zsh)"
 
 # Start Tailscale userspace daemon (SOCKS5 on 127.0.0.1:1055).
