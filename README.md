@@ -542,10 +542,18 @@ most of C++23. Programs built with these compilers find the newer
 "conda:clang-format" = "23.1.5"
 "pipx:clang-tidy" = "23.1.4"      # see "Open" below
 "conda:libcxx-devel" = "23.1.5"   # libc++ for clang++-libcxx
+cmake = "4.5.0"                   # the cluster's is 3.22
+ninja = "1.13.2"                  # not on the cluster
 ```
 
 Only `g++`/`c++` and `clang++` change; `gcc`/`cc` and `clang` stay the system
-versions. Use `clangd-bootstrap` for clangd, not conda's `clang-tools`: its
+versions. CMake finds the compiler as `c++` on `PATH`, so a build configured
+from a shell with mise active uses GCC 16. An IDE that doesn't run with mise's
+`PATH` (CLion as a flatpak) falls back to `/usr/bin/c++`, the system's
+clang 12, which can't build C++23; point its toolchain at the binaries from
+`mise which g++`, `mise which cmake` and `mise which ninja`. Set
+`CMAKE_GENERATOR=Ninja` (or pass `-G Ninja`) to use Ninja from the command
+line. Use `clangd-bootstrap` for clangd, not conda's `clang-tools`: its
 clangd and clang-tidy can't find clang's built-in headers and would shadow the
 `~/bin/clangd` wrapper.
 
